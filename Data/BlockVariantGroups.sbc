@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Definitions xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <BlockVariantGroups>
+    <BlockVariantGroup>
+      <Id Type="MyObjectBuilder_BlockVariantGroup" Subtype="WarpFSDGroup" />
+      <Icon>Textures\GUI\Icons\QDXL.dds</Icon>
+      <DisplayName>S7 Frameshift Drive</DisplayName>
+      <Description>Friendship drive charging!</Description>
+      <Blocks>
+        <Block Type="MyObjectBuilder_UpgradeModule" Subtype="FSDriveLarge" />
+        <Block Type="MyObjectBuilder_UpgradeModule" Subtype="FSDriveSmall" />
+        <Block Type="MyObjectBuilder_UpgradeModule" Subtype="PrototechFSDriveSmall" />
+        <Block Type="MyObjectBuilder_UpgradeModule" Subtype="PrototechFSDriveLarge" />
+      </Blocks>
+    </BlockVariantGroup>
+  </BlockVariantGroups>
+</Definitions>
