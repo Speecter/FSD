@@ -1,6 +1,6 @@
 # FSD Supercruise
 
-**FSD Supercruise** is a Space Engineers mod that adds a custom fast-travel system inspired by Elite Dangerous. It introduces new Fusion Superdrive (FSD) upgrade modules and warp mechanics to make large-scale travel smoother, more immersive, and configurable.
+**FSD Supercruise** is a Space Engineers mod that adds a custom fast-travel system inspired by Elite Dangerous. It introduces new Frameshift Drive (FSD) upgrade modules and warp mechanics to make large-scale travel smoother, more immersive, and configurable.
 
 ## What this project does
 
