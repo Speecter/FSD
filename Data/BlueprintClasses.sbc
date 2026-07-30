@@ -3,6 +3,7 @@
   <BlueprintClassEntries>
     <Entry Class="LargeBlocks" BlueprintSubtypeId="UpgradeModule/FSDriveLarge" />
     <Entry Class="SmallBlocks" BlueprintSubtypeId="UpgradeModule/FSDriveSmall" />
+    <Entry Class="LargeBlocks" BlueprintSubtypeId="UpgradeModule/FSDriveLargeReskin" />
     <Entry Class="LargeBlocks" BlueprintSubtypeId="UpgradeModule/PrototechFSDriveLarge" />
     <Entry Class="SmallBlocks" BlueprintSubtypeId="UpgradeModule/PrototechFSDriveSmall" />
   </BlueprintClassEntries>
