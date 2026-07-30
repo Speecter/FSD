@@ -1,4 +1,4 @@
-﻿using Sandbox.Common.ObjectBuilders;
+using Sandbox.Common.ObjectBuilders;
 using Sandbox.Game;
 using Sandbox.Game.Entities;
 using Sandbox.Game.Entities.Character;
@@ -21,7 +21,7 @@ using VRageMath;
 
 namespace WarpDriveMod
 {
-    [MyEntityComponentDescriptor(typeof(MyObjectBuilder_UpgradeModule), false, "FSDriveLarge", "FSDriveSmall", "PrototechFSDriveLarge", "PrototechFSDriveSmall")]
+    [MyEntityComponentDescriptor(typeof(MyObjectBuilder_UpgradeModule), false, "FSDriveLarge", "FSDriveSmall", "FSDriveLargeReskin", "PrototechFSDriveLarge", "PrototechFSDriveSmall")]
     public class WarpDrive : MyGameLogicComponent
     {
         public IMyFunctionalBlock Block { get; private set; }
@@ -97,9 +97,9 @@ namespace WarpDriveMod
 
             float MassCalc;
             if (arg1.CubeGrid.GridSizeEnum == MyCubeSize.Small)
-                MassCalc = _mass * (SpeedCalc / 0.528f) / 700000f;
+                MassCalc = _mass * (SpeedCalc / 0.528f) / 800000f;
             else
-                MassCalc = _mass * (SpeedCalc / 0.528f) / 1000000f;
+                MassCalc = _mass * (SpeedCalc / 0.528f) / 800000f;
 
             float MaxNeededPower;
 
@@ -211,6 +211,13 @@ namespace WarpDriveMod
                     break;
 
                 case "FSDriveLarge":
+                    powerMultiplier = 1f;
+                    powerSystem.Init(MyStringHash.GetOrCompute("Utility"),
+                        (float)(Settings.baseRequiredPower * Settings.powerRequirementMultiplier * powerMultiplier),
+                        ComputeRequiredPower, (MyCubeBlock)Entity);               
+                    break;
+
+                case "FSDriveLargeReskin":
                     powerMultiplier = 1f;
                     powerSystem.Init(MyStringHash.GetOrCompute("Utility"),
                         (float)(Settings.baseRequiredPower * Settings.powerRequirementMultiplier * powerMultiplier),
