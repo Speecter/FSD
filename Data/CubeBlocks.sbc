@@ -1,15 +1,19 @@
 <?xml version="1.0"?>
 <Definitions xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
   <CubeBlocks>
+
      <Definition xsi:type="MyObjectBuilder_UpgradeModuleDefinition">
       <Id>
         <TypeId>UpgradeModule</TypeId>
         <SubtypeId>FSDriveSmall</SubtypeId>
       </Id>
-      <Public>true</Public>
       <DisplayName>D5 Frameshift Drive</DisplayName>
       <Icon>Textures\GUI\Icons\Cubes\FSDriveSmall.dds</Icon>
-      <Description>Compact version of S7</Description>
+      <Description>Compact model with the same capabilities as the S7 drive. Only one drive is active at a time per grid. Installing additional FSDs will not have any benefits.
+      Top Speed: 50km/s
+      Minimum power use: 20MW (Actual use will be much higher)
+      Gravity Glide max speed: 3km/s
+      Gravity Glide max gravity 0.2G</Description>
       <CubeSize>Small</CubeSize>
       <BlockTopology>TriangleMesh</BlockTopology>
       <Size x="3" y="3" z="2" />
@@ -18,11 +22,11 @@
       <Components>
         <Component Subtype="SteelPlate" Count="40" />
         <Component Subtype="MetalGrid" Count="60" />
-        <Component Subtype="GravityGenerator" Count="20" />
-        <Component Subtype="Detector" Count="20" />
-        <Component Subtype="PowerCell" Count="120" />
-        <Component Subtype="Superconductor" Count="1000" />
-        <Component Subtype="Computer" Count="160" />
+        <Component Subtype="GravityGenerator" Count="40" />
+        <Component Subtype="Detector" Count="40" />
+        <Component Subtype="PowerCell" Count="240" />
+        <Component Subtype="Superconductor" Count="1200" />
+        <Component Subtype="Computer" Count="200" />
         <Component Subtype="Construction" Count="40" />
         <Component Subtype="SteelPlate" Count="20" />
       </Components>
@@ -44,10 +48,17 @@
       <MirroringY>Z</MirroringY>
       <MirroringZ>Y</MirroringZ>
       <EdgeType>Light</EdgeType>
+			<BuildTimeSeconds>60</BuildTimeSeconds>
+			<DamageEffectName>Damage_Electrical_Damaged</DamageEffectName>
+			<DamagedSound>ParticleElectrical</DamagedSound>
       <Upgrades></Upgrades>
       <ResourceSinkGroup>Utility</ResourceSinkGroup>
       <RequiredPowerInput>32</RequiredPowerInput>
-      <DamageEffectId>214</DamageEffectId>
+			<DestroyEffect>Explosion_Warhead_30</DestroyEffect>
+			<DestroySound>WepLrgWarheadExpl</DestroySound>
+      <TargetingGroups>
+				<string>Propulsion</string>
+			</TargetingGroups>
       <PCU>250</PCU>
       <IsAirTight>true</IsAirTight>
     </Definition>
@@ -57,24 +68,27 @@
         <TypeId>UpgradeModule</TypeId>
         <SubtypeId>FSDriveLarge</SubtypeId>
       </Id>
-      <Public>true</Public>
       <DisplayName>S7 Frameshift Drive</DisplayName>
       <Icon>Textures\GUI\Icons\Cubes\FSDriveLarge.dds</Icon>
-      <Description>Friendship drive charging!</Description>
+      <Description>Friendship Drive charging! Only one drive is active at a time per grid. Installing additional FSDs will not have any benefits.
+      Top Speed: 50km/s
+      Minimum power use: 20MW (Actual use will be much higher)
+      Gravity Glide max speed: 3km/s
+      Gravity Glide max gravity 0.2G</Description>
       <CubeSize>Large</CubeSize>
       <BlockTopology>TriangleMesh</BlockTopology>
       <Size x="3" y="3" z="2" />
       <ModelOffset x="0" y="0" z="0" />
       <Model>Models\Cubes\Large\JumpDrive.mwm</Model>
       <Components>
-        <Component Subtype="SteelPlate" Count="180" />
-        <Component Subtype="MetalGrid" Count="300" />
-        <Component Subtype="GravityGenerator" Count="120" />
-        <Component Subtype="Detector" Count="120" />
-        <Component Subtype="PowerCell" Count="480" />
-        <Component Subtype="Superconductor" Count="3000" />
-        <Component Subtype="Computer" Count="400" />
-        <Component Subtype="Construction" Count="140" />
+        <Component Subtype="SteelPlate" Count="150" />
+        <Component Subtype="MetalGrid" Count="200" />
+        <Component Subtype="GravityGenerator" Count="40" />
+        <Component Subtype="Detector" Count="40" />
+        <Component Subtype="PowerCell" Count="240" />
+        <Component Subtype="Superconductor" Count="1200" />
+        <Component Subtype="Computer" Count="200" />
+        <Component Subtype="Construction" Count="120" />
         <Component Subtype="SteelPlate" Count="100" />
       </Components>
       <CriticalComponent Subtype="Computer" Index="0" />
@@ -95,13 +109,91 @@
       <MirroringY>Z</MirroringY>
       <MirroringZ>Y</MirroringZ>
       <EdgeType>Light</EdgeType>
+			<BuildTimeSeconds>120</BuildTimeSeconds>
+			<DamageEffectName>Damage_Electrical_Damaged</DamageEffectName>
+			<DamagedSound>ParticleElectrical</DamagedSound>
       <Upgrades></Upgrades>
       <ResourceSinkGroup>Utility</ResourceSinkGroup>
-      <RequiredPowerInput>44</RequiredPowerInput>
-      <DamageEffectId>214</DamageEffectId>
+      <RequiredPowerInput>32</RequiredPowerInput>
+			<DestroyEffect>Explosion_Warhead_30</DestroyEffect>
+			<DestroySound>WepLrgWarheadExpl</DestroySound>
+      <TargetingGroups>
+				<string>Propulsion</string>
+			</TargetingGroups>
       <PCU>250</PCU>
       <IsAirTight>true</IsAirTight>
     </Definition>
+    
+    <Definition xsi:type="MyObjectBuilder_UpgradeModuleDefinition">
+      <Id>
+        <TypeId>UpgradeModule</TypeId>
+        <SubtypeId>FSDriveLargeReskin</SubtypeId>
+      </Id>
+      <DisplayName>S7 Frameshift Drive Type II</DisplayName>
+			<Icon>Textures\GUI\Icons\Cubes\JumpDriveReskin.dds</Icon>
+      <Description>Friendship Drive charging! Only one drive is active at a time per grid. Installing additional FSDs will not have any benefits.
+      Top Speed: 50km/s
+      Minimum power use: 20MW (Actual use will be much higher)
+      Gravity Glide max speed: 3km/s
+      Gravity Glide max gravity 0.2G</Description>
+      <CubeSize>Large</CubeSize>
+      <BlockTopology>TriangleMesh</BlockTopology>
+			<Size x="3" y="2" z="3" />
+      <ModelOffset x="0" y="0" z="0" />
+			<Model>Models\Cubes\Large\JumpDriveReskin.mwm</Model>
+      <Components>
+        <Component Subtype="SteelPlate" Count="150" />
+        <Component Subtype="MetalGrid" Count="200" />
+        <Component Subtype="GravityGenerator" Count="40" />
+        <Component Subtype="Detector" Count="40" />
+        <Component Subtype="PowerCell" Count="240" />
+        <Component Subtype="Superconductor" Count="1200" />
+        <Component Subtype="Computer" Count="200" />
+        <Component Subtype="Construction" Count="120" />
+        <Component Subtype="SteelPlate" Count="100" />
+      </Components>
+      <CriticalComponent Subtype="Computer" Index="0" />
+			<MountPoints>
+				<MountPoint Side="Top" StartX="0" StartY="0.3" EndX="3" EndY="2.7" />
+				<MountPoint Side="Bottom" StartX="0" StartY="0.3" EndX="3" EndY="2.7" Default="true" />
+				<MountPoint Side="Front" StartX="0" StartY="0.3" EndX="0.6" EndY="1.7" />
+				<MountPoint Side="Front" StartX="2.4" StartY="0.3" EndX="3" EndY="1.7" />
+				<MountPoint Side="Front" StartX="0.6" StartY="0.3" EndX="2.4" EndY="1.1" />
+				<MountPoint Side="Back" StartX="0" StartY="0.3" EndX="0.6" EndY="1.7" />
+				<MountPoint Side="Back" StartX="2.4" StartY="0.3" EndX="3" EndY="1.7" />
+				<MountPoint Side="Back" StartX="0.6" StartY="0.3" EndX="2.4" EndY="1.1" />
+				<MountPoint Side="Left" StartX="0.3" StartY="0" EndX="2.7" EndY="2" />
+				<MountPoint Side="Left" StartX="0" StartY="0.3" EndX="3" EndY="1.7" />
+				<MountPoint Side="Right" StartX="0.3" StartY="0" EndX="2.7" EndY="0.2" />
+				<MountPoint Side="Right" StartX="0.3" StartY="1.8" EndX="2.7" EndY="2" />
+				<MountPoint Side="Right" StartX="0" StartY="0.3" EndX="0.2" EndY="1.7" />
+				<MountPoint Side="Right" StartX="2.8" StartY="0.3" EndX="3" EndY="1.7" />
+				<MountPoint Side="Right" StartX="1.1" StartY="0.6" EndX="1.9" EndY="1.4" />
+			</MountPoints>
+			<BuildProgressModels>
+				<Model BuildPercentUpperBound="0.33" File="Models\Cubes\Large\JumpDriveReskinConstruction_1.mwm" />
+				<Model BuildPercentUpperBound="0.66" File="Models\Cubes\Large\JumpDriveReskinConstruction_2.mwm" />
+				<Model BuildPercentUpperBound="1.00" File="Models\Cubes\Large\JumpDriveReskinConstruction_3.mwm" />
+			</BuildProgressModels>
+      <BlockPairName>FSDriveReskin</BlockPairName>
+			<MirroringY>X</MirroringY>
+			<MirroringX>Y</MirroringX>
+      <EdgeType>Light</EdgeType>
+			<BuildTimeSeconds>120</BuildTimeSeconds>
+			<DamageEffectName>Damage_Electrical_Damaged</DamageEffectName>
+			<DamagedSound>ParticleElectrical</DamagedSound>
+      <ResourceSinkGroup>Utility</ResourceSinkGroup>
+      <Upgrades></Upgrades>
+      <RequiredPowerInput>32</RequiredPowerInput>
+			<DestroyEffect>Explosion_Warhead_30</DestroyEffect>
+			<DestroySound>WepLrgWarheadExpl</DestroySound>
+      <TargetingGroups>
+				<string>Propulsion</string>
+			</TargetingGroups>
+      <PCU>250</PCU>
+			<DLC>CoreSystems</DLC>
+    </Definition>
+
     <Definition xsi:type="MyObjectBuilder_UpgradeModuleDefinition">
       <Id>
         <TypeId>UpgradeModule</TypeId>
@@ -110,7 +202,11 @@
       <Public>true</Public>
       <DisplayName>Prototech S77 Frameshift Drive</DisplayName>
       <Icon>Textures\GUI\Icons\Cubes\PrototechFSDriveLarge.dds</Icon>
-      <Description>Prototech-outfitted FSD for best perfomance</Description>
+      <Description>Prototech-outfitted FSD for best perfomance. Only one drive is active at a time per grid. Installing additional FSDs will not have any benefits.
+      Top Speed: 50km/s
+      Minimum power use: 20MW (Actual use will be much higher)
+      Gravity Glide max speed: 3km/s
+      Gravity Glide max gravity 0.2G</Description>
       <CubeSize>Large</CubeSize>
       <BlockTopology>TriangleMesh</BlockTopology>
       <Size x="3" y="3" z="3" />
@@ -124,25 +220,25 @@
                         <SubtypeId>PrototechScrap</SubtypeId>
                     </DeconstructId>
                 </Component>
-        <Component Subtype="MetalGrid" Count="60" />
-        <Component Subtype="GravityGenerator" Count="20" />
-        <Component Subtype="Detector" Count="20" />
+        <Component Subtype="MetalGrid" Count="120" />
+        <Component Subtype="GravityGenerator" Count="40" />
+        <Component Subtype="Detector" Count="40" />
         <Component Subtype="PrototechCapacitor" Count="40">
                       <DeconstructId>
                         <TypeId>Ingot</TypeId>
                         <SubtypeId>PrototechScrap</SubtypeId>
                     </DeconstructId>
                 </Component>
-        <Component Subtype="Superconductor" Count="6000" />
+        <Component Subtype="Superconductor" Count="2000" />
         <Component Subtype="PrototechCircuitry" Count="20">
                     <DeconstructId>
                         <TypeId>Ingot</TypeId>
                         <SubtypeId>PrototechScrap</SubtypeId>
                     </DeconstructId>
                 </Component>
-        <Component Subtype="Computer" Count="160" />
-        <Component Subtype="Construction" Count="40" />
-        <Component Subtype="SteelPlate" Count="20" />
+        <Component Subtype="Computer" Count="200" />
+        <Component Subtype="Construction" Count="120" />
+        <Component Subtype="SteelPlate" Count="100" />
       </Components>
       <CriticalComponent Subtype="Computer" Index="0" />
       <MountPoints>
@@ -158,14 +254,21 @@
         <Model BuildPercentUpperBound="0.66" File="Models\Cubes\Large\Prototech_JumpDrive_Construction_2.mwm" />
         <Model BuildPercentUpperBound="1.00" File="Models\Cubes\Large\Prototech_JumpDrive_Construction_3.mwm" />
       </BuildProgressModels>
-      <BlockPairName>FSDrive</BlockPairName>
+      <BlockPairName>FSDriveProto</BlockPairName>
       <MirroringY>Z</MirroringY>
       <MirroringZ>Y</MirroringZ>
       <EdgeType>Light</EdgeType>
+			<BuildTimeSeconds>120</BuildTimeSeconds>
+			<DamageEffectName>Damage_Electrical_Damaged</DamageEffectName>
+			<DamagedSound>ParticleElectrical</DamagedSound>
       <Upgrades></Upgrades>
       <ResourceSinkGroup>Utility</ResourceSinkGroup>
       <RequiredPowerInput>32</RequiredPowerInput>
-      <DamageEffectId>214</DamageEffectId>
+			<DestroyEffect>Explosion_Warhead_30</DestroyEffect>
+			<DestroySound>WepLrgWarheadExpl</DestroySound>
+      <TargetingGroups>
+				<string>Propulsion</string>
+			</TargetingGroups>
       <PCU>250</PCU>
       <IsAirTight>true</IsAirTight>
     </Definition>
@@ -178,7 +281,11 @@
       <Public>true</Public>
       <DisplayName>Prototech D55 Frameshift Drive</DisplayName>
       <Icon>Textures\GUI\Icons\Cubes\PrototechFSDriveSmall.dds</Icon>
-      <Description>Factorum-modified version of D5</Description>
+      <Description>Factorum-modified version of D5. Only one drive is active at a time per grid. Installing additional FSDs will not have any benefits.
+      Top Speed: 50km/s
+      Minimum power use: 20MW (Actual use will be much higher)
+      Gravity Glide max speed: 3km/s
+      Gravity Glide max gravity 0.2G</Description>
       <CubeSize>Small</CubeSize>
       <BlockTopology>TriangleMesh</BlockTopology>
       <Size x="3" y="3" z="4" />
@@ -192,19 +299,23 @@
                         <SubtypeId>PrototechScrap</SubtypeId>
                     </DeconstructId>
                 </Component>
-        <Component Subtype="SteelPlate" Count="40" />
-        <Component Subtype="MetalGrid" Count="60" />
-        <Component Subtype="GravityGenerator" Count="20" />
-        <Component Subtype="Detector" Count="20" />
-        <Component Subtype="PowerCell" Count="120" />
-        <Component Subtype="Superconductor" Count="3000" />
-        <Component Subtype="PrototechCapacitor" Count="20">
+        <Component Subtype="MetalGrid" Count="40" />
+        <Component Subtype="GravityGenerator" Count="40" />
+        <Component Subtype="Detector" Count="40" />
+        <Component Subtype="PrototechCapacitor" Count="40">
                       <DeconstructId>
                         <TypeId>Ingot</TypeId>
                         <SubtypeId>PrototechScrap</SubtypeId>
                     </DeconstructId>
                 </Component>
-        <Component Subtype="Computer" Count="160" />
+        <Component Subtype="Superconductor" Count="2000" />
+        <Component Subtype="PrototechCircuitry" Count="20">
+                    <DeconstructId>
+                        <TypeId>Ingot</TypeId>
+                        <SubtypeId>PrototechScrap</SubtypeId>
+                    </DeconstructId>
+                </Component>
+        <Component Subtype="Computer" Count="200" />
         <Component Subtype="Construction" Count="40" />
         <Component Subtype="SteelPlate" Count="20" />
       </Components>
@@ -218,17 +329,24 @@
         <MountPoint Side="Bottom" StartX="0" StartY="0" EndX="3" EndY="2" Default="true" />
       </MountPoints>
       <BuildProgressModels>
-            <Model BuildPercentUpperBound="0.5" File="Models\Cubes\Small\Prototech_JumpDrive_Construction_1.mwm" />
-            <Model BuildPercentUpperBound="1.00" File="Models\Cubes\Small\Prototech_JumpDrive_Construction_2.mwm" />
+        <Model BuildPercentUpperBound="0.5" File="Models\Cubes\Small\Prototech_JumpDrive_Construction_1.mwm" />
+        <Model BuildPercentUpperBound="1.00" File="Models\Cubes\Small\Prototech_JumpDrive_Construction_2.mwm" />
       </BuildProgressModels>
-      <BlockPairName>FSDrive</BlockPairName>
+      <BlockPairName>FSDriveProto</BlockPairName>
       <MirroringY>Z</MirroringY>
       <MirroringZ>Y</MirroringZ>
       <EdgeType>Light</EdgeType>
+			<BuildTimeSeconds>60</BuildTimeSeconds>
+			<DamageEffectName>Damage_Electrical_Damaged</DamageEffectName>
+			<DamagedSound>ParticleElectrical</DamagedSound>
       <Upgrades></Upgrades>
       <ResourceSinkGroup>Utility</ResourceSinkGroup>
       <RequiredPowerInput>32</RequiredPowerInput>
-      <DamageEffectId>214</DamageEffectId>
+			<DestroyEffect>Explosion_Warhead_30</DestroyEffect>
+			<DestroySound>WepLrgWarheadExpl</DestroySound>
+      <TargetingGroups>
+				<string>Propulsion</string>
+			</TargetingGroups>
       <PCU>250</PCU>
       <IsAirTight>true</IsAirTight>
     </Definition>
