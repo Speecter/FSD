@@ -1,4 +1,4 @@
-﻿using Sandbox.Game;
+using Sandbox.Game;
 using Sandbox.Game.Entities;
 using Sandbox.Game.Entities.Blocks;
 using Sandbox.Game.GameSystems;
@@ -1732,6 +1732,11 @@ namespace WarpDriveMod
                                 totalPower = WarpDrive.Instance.Settings.baseRequiredPower + (_mass * 2.1f / 100000f);
                                 break;
 
+                            case "FSDriveLargeReskin":
+                                // powerMultiplier = 1;
+                                totalPower = WarpDrive.Instance.Settings.baseRequiredPower + (_mass * 2.1f / 100000f);
+                                break;
+
                             case "PrototechFSDriveSmall":
                                 // powerMultiplier = 0.85;
                                 totalPower =  0.5f * WarpDrive.Instance.Settings.baseRequiredPowerSmall + (_mass * 2.1f / 100000f);
@@ -1802,6 +1807,11 @@ namespace WarpDriveMod
                                     break;
 
                                 case "FSDriveLarge":
+                                    // powerMultiplier = 1;
+                                    totalPower = (WarpDrive.Instance.Settings.baseRequiredPower + percent) / WarpDrive.Instance.Settings.powerRequirementBySpeedDeviderLarge;
+                                    break;
+
+                                case "FSDriveLargeReskin":
                                     // powerMultiplier = 1;
                                     totalPower = (WarpDrive.Instance.Settings.baseRequiredPower + percent) / WarpDrive.Instance.Settings.powerRequirementBySpeedDeviderLarge;
                                     break;
