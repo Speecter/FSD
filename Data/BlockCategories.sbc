@@ -12,7 +12,11 @@
       <StrictSearch>true</StrictSearch>
       <ItemIds>
         <string>UpgradeModule/FSDriveLarge</string>
+        <string>UpgradeModule/FSDriveLarge_A</string>
         <string>UpgradeModule/FSDriveLargeReskin</string>
+        <string>UpgradeModule/FSDriveLargeReskin_A</string>
+        <string>UpgradeModule/PrototechFSDriveLarge</string>
+        <string>UpgradeModule/PrototechFSDriveLarge_S</string>
       </ItemIds>
     </Category>
 
@@ -26,6 +30,9 @@
       <StrictSearch>true</StrictSearch>
       <ItemIds>
         <string>UpgradeModule/FSDriveSmall</string>
+        <string>UpgradeModule/FSDriveSmall_A</string>
+        <string>UpgradeModule/PrototechFSDriveSmall</string>
+        <string>UpgradeModule/PrototechFSDriveSmall_S</string>
       </ItemIds>
     </Category>
 

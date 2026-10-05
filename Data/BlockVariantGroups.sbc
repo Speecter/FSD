@@ -7,11 +7,16 @@
       <Blocks>
         <Block Type="MyObjectBuilder_UpgradeModule" Subtype="FSDriveLarge" />
         <Block Type="MyObjectBuilder_UpgradeModule" Subtype="FSDriveSmall" />
+        <Block Type="MyObjectBuilder_UpgradeModule" Subtype="FSDriveLarge_A" />
+        <Block Type="MyObjectBuilder_UpgradeModule" Subtype="FSDriveSmall_A" />
+
+        <Block Type="MyObjectBuilder_UpgradeModule" Subtype="FSDriveLargeReskin" />
+        <Block Type="MyObjectBuilder_UpgradeModule" Subtype="FSDriveLargeReskin_A" />
 
         <Block Type="MyObjectBuilder_UpgradeModule" Subtype="PrototechFSDriveLarge" />
         <Block Type="MyObjectBuilder_UpgradeModule" Subtype="PrototechFSDriveSmall" />
-
-        <Block Type="MyObjectBuilder_UpgradeModule" Subtype="FSDriveLargeReskin" />
+        <Block Type="MyObjectBuilder_UpgradeModule" Subtype="PrototechFSDriveLarge_S" />
+        <Block Type="MyObjectBuilder_UpgradeModule" Subtype="PrototechFSDriveSmall_S" />
       </Blocks>
     </BlockVariantGroup>
 

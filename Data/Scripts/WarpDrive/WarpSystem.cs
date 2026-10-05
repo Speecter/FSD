@@ -24,6 +24,7 @@ namespace WarpDriveMod
         public long InvalidOn => grid.InvalidOn;
         public int Id { get; private set; }
         public State WarpState { get; set; }
+        public HyperspaceSystem Hyperspace { get; private set; }
         public static WarpSystem Instance;
         public event Action<WarpSystem> OnSystemInvalidatedAction;
         public List<IMyPlayer> OnlinePlayersList = new List<IMyPlayer>();
@@ -62,15 +63,15 @@ namespace WarpDriveMod
 
         public bool IsPrototech = false;
 
-        public string warnDestablalized = "Supercruise destabilized!";
+        public string warnDestablalized = "FSD operation destabilized!";
         public string warnAborted = "Charging procedure aborted!";
         public string warnDamaged = "Frame shift drive Offline or Damaged!";
         public string warnNoPower = "Not enough power!";
         public string TooFast = "Decrease your speed!";
         public string EmergencyDropSpeed = "Emergency Stop!";
         public string warnStatic = "Unable to move static grid!";
-        public string warnInUse = "Grid is already at supercruise!";
-        public string warnNoEstablish = "Unable to establish supercruise!";
+        public string warnInUse = "FSD is already in use!";
+        public string warnNoEstablish = "Unable to engage FSD!";
         public string warnOverheat = "Frame shift drive overheated!";
         public string ProximytyAlert = "Can't Start FSD, Proximity Alert!";
 
@@ -78,7 +79,7 @@ namespace WarpDriveMod
 
         public WarpSystem(WarpDrive block, WarpSystem oldSystem)
         {
-            if (block.Block.BlockDefinition.SubtypeId == "PrototechFSDriveLarge" || block.Block.BlockDefinition.SubtypeId == "PrototechFSDriveSmall")
+            if (block != null && block.IsPrototech)
                 IsPrototech = true;
 
             if (block == null || block.Block == null || block.Block.CubeGrid == null)
@@ -94,6 +95,8 @@ namespace WarpDriveMod
             grid.AddCounter("WarpDrives", warpDriveCounter);
 
             grid.OnSystemInvalidated += OnSystemInvalidated;
+
+            Hyperspace = new HyperspaceSystem(block, grid);
 
             if (!MyAPIGateway.Utilities.IsDedicated && grid.MainGrid != null)
             {
@@ -1048,6 +1051,12 @@ namespace WarpDriveMod
             {
                 if (drive.System.WarpState == State.Idle)
                 {
+                    if (Hyperspace != null && Hyperspace.State != HyperspaceSystem.HyperState.Idle)
+                    {
+                        SendMessage(warnInUse, 3f, "Red", PlayerID);
+                        return;
+                    }
+
                     if (!hasEnoughPower || !FindPlayerInCockpit())
                         return;
 
@@ -1139,7 +1148,7 @@ namespace WarpDriveMod
             return PlayersIdList;
         }
 
-        private bool ConnectedStatic(IMyCubeGrid MyGrid)
+        public bool ConnectedStatic(IMyCubeGrid MyGrid) // HyperspaceSystem.cs borrows it now :)))
         {
             if (MyGrid == null)
                 return false;
@@ -1609,7 +1618,7 @@ namespace WarpDriveMod
             }
         }
 
-        bool IsInGravity()
+        public bool IsInGravity() // so HyperspaceSystem.cs can borrow it
         {
             if (grid == null || grid.MainGrid == null)
                 return true;
@@ -1720,35 +1729,31 @@ namespace WarpDriveMod
 
                         switch (drive.Block.BlockDefinition.SubtypeId)
                         {
-                            // Updates like intels tik-tok process
-                            // Vanilla >> regular power and size
                             case "FSDriveSmall":
-                                // powerMultiplier = 1;
+                            case "FSDriveSmall_A":
                                 totalPower = WarpDrive.Instance.Settings.baseRequiredPowerSmall + (_mass * 2.1f / 100000f);
                                 break;
 
                             case "FSDriveLarge":
-                                // powerMultiplier = 1;
-                                totalPower = WarpDrive.Instance.Settings.baseRequiredPower + (_mass * 2.1f / 100000f);
-                                break;
-
+                            case "FSDriveLarge_A":
                             case "FSDriveLargeReskin":
-                                // powerMultiplier = 1;
+                            case "FSDriveLargeReskin_A":
+                            case "FSDriveLargerReskin":
+                            case "FSDriveLargerReskin_A":
                                 totalPower = WarpDrive.Instance.Settings.baseRequiredPower + (_mass * 2.1f / 100000f);
                                 break;
 
                             case "PrototechFSDriveSmall":
-                                // powerMultiplier = 0.85;
-                                totalPower =  0.5f * WarpDrive.Instance.Settings.baseRequiredPowerSmall + (_mass * 2.1f / 100000f);
+                            case "PrototechFSDriveSmall_S":
+                                totalPower = 0.5f * WarpDrive.Instance.Settings.baseRequiredPowerSmall + (_mass * 2.1f / 100000f);
                                 break;
 
                             case "PrototechFSDriveLarge":
-                                // powerMultiplier = 0.85;
+                            case "PrototechFSDriveLarge_S":
                                 totalPower = 0.5f * WarpDrive.Instance.Settings.baseRequiredPower + (_mass * 2.1f / 1000000f);
                                 break;
 
                             default:
-                                // No drive found - deactivated
                                 break;
                         }
                     }
@@ -1799,35 +1804,30 @@ namespace WarpDriveMod
                         {
                             switch (drive.Block.BlockDefinition.SubtypeId)
                             {
-                                // Updates like intels tik-tok process
-                                // Vanilla >> regular power and size
                                 case "FSDriveSmall":
-                                    // powerMultiplier = 1;
+                                case "FSDriveSmall_A":
                                     totalPower = (WarpDrive.Instance.Settings.baseRequiredPowerSmall + percent) / WarpDrive.Instance.Settings.powerRequirementBySpeedDeviderSmall;
                                     break;
 
                                 case "FSDriveLarge":
-                                    // powerMultiplier = 1;
-                                    totalPower = (WarpDrive.Instance.Settings.baseRequiredPower + percent) / WarpDrive.Instance.Settings.powerRequirementBySpeedDeviderLarge;
-                                    break;
-
+                                case "FSDriveLarge_A":
                                 case "FSDriveLargeReskin":
-                                    // powerMultiplier = 1;
+                                case "FSDriveLargeReskin_A":
+                                case "FSDriveLargerReskin":
+                                case "FSDriveLargerReskin_A":
                                     totalPower = (WarpDrive.Instance.Settings.baseRequiredPower + percent) / WarpDrive.Instance.Settings.powerRequirementBySpeedDeviderLarge;
                                     break;
 
-                                // Tech2x smaller, reduced power needed (85%)
                                 case "PrototechFSDriveSmall":
-                                    // powerMultiplier = 0.85;
+                                case "PrototechFSDriveSmall_S":
                                     totalPower = (WarpDrive.Instance.Settings.baseRequiredPowerSmall * 0.5f + percent) / WarpDrive.Instance.Settings.powerRequirementBySpeedDeviderSmall;
                                     break;
 
                                 case "PrototechFSDriveLarge":
-                                    // powerMultiplier = 0.85;
+                                case "PrototechFSDriveLarge_S":
                                     totalPower = (WarpDrive.Instance.Settings.baseRequiredPower * 0.5f + percent) / WarpDrive.Instance.Settings.powerRequirementBySpeedDeviderLarge;
                                     break;
                                 default:
-                                    // No drive found - deactivated
                                     break;
                             }
                         }
@@ -2152,37 +2152,41 @@ namespace WarpDriveMod
             OnSystemInvalidatedAction = null;
         }
 
+        private bool IsPlayerPilotingGrid(IMyPlayer p)
+        {
+            if (p == null) return false;
+            var controlledBlock = (p.Controller?.ControlledEntity?.Entity as VRage.Game.ModAPI.IMyCubeBlock)
+                               ?? (p.Character?.Parent as VRage.Game.ModAPI.IMyCubeBlock);
+            return controlledBlock?.CubeGrid != null && grid != null && grid.Contains((MyCubeGrid)controlledBlock.CubeGrid);
+        }
+
         public void SendMessage(string msg, float seconds = 5, string font = "Red", long PlayerID = 0L)
         {
-            var Hostplayer = MyAPIGateway.Session?.Player;
-            var cockpit = Hostplayer?.Character?.Parent as IMyShipController;
-
+            // 1. If a specific PlayerID triggered the jump, only notify them if they are actively piloting this ship
             if (OnlinePlayersList != null && OnlinePlayersList.Count > 0 && PlayerID > 0)
             {
-                foreach (var SelectedPlayer in OnlinePlayersList)
+                foreach (var selectedPlayer in OnlinePlayersList)
                 {
-                    if (SelectedPlayer.IdentityId == PlayerID)
+                    if (selectedPlayer.IdentityId == PlayerID)
                     {
-                        MyVisualScriptLogicProvider.ShowNotification(msg, (int)(seconds * 1000), font, SelectedPlayer.IdentityId);
+                        if (IsPlayerPilotingGrid(selectedPlayer))
+                        {
+                            MyVisualScriptLogicProvider.ShowNotification(msg, (int)(seconds * 1000), font, selectedPlayer.IdentityId);
+                        }
                         return;
                     }
                 }
             }
 
-            if (Hostplayer != null && cockpit?.CubeGrid != null && grid.Contains((MyCubeGrid)cockpit.CubeGrid))
-                MyVisualScriptLogicProvider.ShowNotification(msg, (int)(seconds * 1000), font, Hostplayer.IdentityId);
-
+            // 2. Otherwise (or for general/broadcast grid alerts), notify any player currently piloting this grid
             if (OnlinePlayersList != null && OnlinePlayersList.Count > 0)
             {
-                foreach (var ClientPlayer in OnlinePlayersList)
+                foreach (var player in OnlinePlayersList)
                 {
-                    if (Hostplayer != null && ClientPlayer.IdentityId == Hostplayer.IdentityId)
-                        continue;
-
-                    var ClientCockpit = ClientPlayer?.Character?.Parent as IMyShipController;
-
-                    if (ClientCockpit?.CubeGrid != null && grid.Contains((MyCubeGrid)ClientCockpit.CubeGrid))
-                        MyVisualScriptLogicProvider.ShowNotification(msg, (int)(seconds * 1000), font, ClientPlayer.IdentityId);
+                    if (IsPlayerPilotingGrid(player))
+                    {
+                        MyVisualScriptLogicProvider.ShowNotification(msg, (int)(seconds * 1000), font, player.IdentityId);
+                    }
                 }
             }
         }

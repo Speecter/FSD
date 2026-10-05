@@ -7,12 +7,12 @@
         <SubtypeId>quantum_charging</SubtypeId>
       </Id>
       <Category>SHIP</Category>
-      <Volume>1.7</Volume>
-      <MaxDistance>1000</MaxDistance>
+      <Volume>0.8</Volume>
+      <MaxDistance>500</MaxDistance>
       <Loopable>false</Loopable>
       <Waves>
         <Wave Type="D3">
-          <Start>Audio\SC\charging_Fsd.xwm</Start>
+          <Start>Audio\SC\charging_Fsd.wav</Start>
         </Wave>
       </Waves>
     </Sound>
@@ -22,7 +22,7 @@
         <SubtypeId>glide_off</SubtypeId>
       </Id>
       <Category>SHIP</Category>
-      <Volume>1.7</Volume>
+      <Volume>0.8</Volume>
       <MaxDistance>5000</MaxDistance>
       <Loopable>false</Loopable>
       <Waves>
@@ -37,7 +37,7 @@
         <SubtypeId>glide_on</SubtypeId>
       </Id>
       <Category>SHIP</Category>
-      <Volume>1.7</Volume>
+      <Volume>0.8</Volume>
       <MaxDistance>5000</MaxDistance>
       <Loopable>false</Loopable>
       <Waves>
@@ -49,30 +49,15 @@
     <Sound>
       <Id>
         <TypeId>MyObjectBuilder_AudioDefinition</TypeId>
-        <SubtypeId>quantum_charging</SubtypeId>
-      </Id>
-      <Category>SHIP</Category>
-      <Volume>1.7</Volume>
-      <MaxDistance>1000</MaxDistance>
-      <Loopable>false</Loopable>
-      <Waves>
-        <Wave Type="D3">
-          <Start>Audio\SC\charging_Fsd.xwm</Start>
-        </Wave>
-      </Waves>
-    </Sound>
-    <Sound>
-      <Id>
-        <TypeId>MyObjectBuilder_AudioDefinition</TypeId>
         <SubtypeId>quantum_jumpout</SubtypeId>
       </Id>
       <Category>SHIP</Category>
-      <Volume>1.7</Volume>
+      <Volume>1.2</Volume>
       <MaxDistance>10000</MaxDistance>
       <Loopable>false</Loopable>
       <Waves>
         <Wave Type="D3">
-          <Start>Audio\SC\jump_out_supercruise.xwm</Start>
+          <Start>Audio\SC\jump_out_supercruise.wav</Start>
         </Wave>
       </Waves>
     </Sound>
@@ -82,7 +67,7 @@
         <SubtypeId>quantum_jumpin</SubtypeId>
       </Id>
       <Category>SHIP</Category>
-      <Volume>1.7</Volume>
+      <Volume>0.8</Volume>
       <MaxDistance>30000</MaxDistance>
       <Loopable>false</Loopable>
       <Waves>
@@ -97,7 +82,7 @@
         <SubtypeId>SuperCruiseGravity</SubtypeId>
       </Id>
       <Category>SHIP</Category>
-      <Volume>1.7</Volume>
+      <Volume>1.2</Volume>
       <MaxDistance>10000</MaxDistance>
       <Loopable>false</Loopable>
       <Waves>
@@ -112,7 +97,7 @@
         <SubtypeId>FSD_Proto_JumpOut</SubtypeId>
       </Id>
       <Category>SHIP</Category>
-      <Volume>1.7</Volume>
+      <Volume>1.2</Volume>
       <MaxDistance>10000</MaxDistance>
       <Loopable>false</Loopable>
       <Waves>
@@ -127,7 +112,7 @@
         <SubtypeId>FSD_Proto_JumpIn</SubtypeId>
       </Id>
       <Category>SHIP</Category>
-      <Volume>1.7</Volume>
+      <Volume>1.2</Volume>
       <MaxDistance>10000</MaxDistance>
       <Loopable>false</Loopable>
       <Waves>
@@ -142,12 +127,118 @@
         <SubtypeId>FSD_ProtoCharging</SubtypeId>
       </Id>
       <Category>SHIP</Category>
-      <Volume>1.7</Volume>
-      <MaxDistance>1000</MaxDistance>
+      <Volume>0.8</Volume>
+      <MaxDistance>500</MaxDistance>
       <Loopable>false</Loopable>
       <Waves>
         <Wave Type="D3">
           <Start>Audio\SC\FSD_ProtoCharging.wav</Start>
+        </Wave>
+      </Waves>
+    </Sound>
+    <Sound>
+      <Id>
+        <TypeId>MyObjectBuilder_AudioDefinition</TypeId>
+        <SubtypeId>inHyperSpace</SubtypeId>
+      </Id>
+      <Category>SHIP</Category>
+      <Volume>1.2</Volume>
+      <MaxDistance>5000</MaxDistance>
+      <Loopable>false</Loopable>
+      <Waves>
+        <Wave Type="D3">
+          <Start>Audio\SC\inHyperSpace.wav</Start>
+        </Wave>
+      </Waves>
+    </Sound>
+    <Sound>
+      <Id>
+        <TypeId>MyObjectBuilder_AudioDefinition</TypeId>
+        <SubtypeId>hyperdiction</SubtypeId>
+      </Id>
+      <Category>SHIP</Category>
+      <Volume>0.8</Volume>
+      <MaxDistance>500</MaxDistance>
+      <Loopable>false</Loopable>
+      <Waves>
+        <Wave Type="D2">
+          <Start>Audio\SC\hyperdiction.wav</Start>
+        </Wave>
+      </Waves>
+    </Sound>
+    <Sound>
+      <Id>
+        <TypeId>MyObjectBuilder_AudioDefinition</TypeId>
+        <SubtypeId>spool_down</SubtypeId>
+      </Id>
+      <Category>SHIP</Category>
+      <Volume>0.6</Volume>
+      <MaxDistance>500</MaxDistance>
+      <Loopable>false</Loopable>
+      <Waves>
+        <Wave Type="D3">
+          <Start>Audio\SC\FTL_Spool_Down.wav</Start>
+        </Wave>
+      </Waves>
+    </Sound>
+    <Sound>
+      <Id>
+        <TypeId>MyObjectBuilder_AudioDefinition</TypeId>
+        <SubtypeId>hold_charge</SubtypeId>
+      </Id>
+      <Category>SHIP</Category>
+      <Volume>0.8</Volume>
+      <MaxDistance>500</MaxDistance>
+      <Loopable>true</Loopable>
+      <Waves>
+        <Wave Type="D3">
+          <Start>Audio\SC\FTL_Charge_Up_Loop.wav</Start>
+          <Loop>Audio\SC\FTL_Charge_Up_Loop.wav</Loop>
+        </Wave>
+      </Waves>
+    </Sound>
+    <Sound>
+      <Id>
+        <TypeId>MyObjectBuilder_AudioDefinition</TypeId>
+        <SubtypeId>engaging_hyperspace</SubtypeId>
+      </Id>
+      <Category>SHIP</Category>
+      <Volume>0.8</Volume>
+      <MaxDistance>500</MaxDistance>
+      <Loopable>false</Loopable>
+      <Waves>
+        <Wave Type="D3">
+          <Start>Audio\SC\engaging_hyperspace.wav</Start>
+        </Wave>
+      </Waves>
+    </Sound>
+    <Sound>
+      <Id>
+        <TypeId>MyObjectBuilder_AudioDefinition</TypeId>
+        <SubtypeId>fsd_hyper_charge</SubtypeId>
+      </Id>
+      <Category>SHIP</Category>
+      <Volume>0.8</Volume>
+      <MaxDistance>500</MaxDistance>
+      <Loopable>false</Loopable>
+      <Waves>
+        <Wave Type="D3">
+          <Start>Audio\SC\fsd_hyper_charge.wav</Start>
+        </Wave>
+      </Waves>
+    </Sound>
+    <Sound>
+      <Id>
+        <TypeId>MyObjectBuilder_AudioDefinition</TypeId>
+        <SubtypeId>Hyperspace_jump</SubtypeId>
+      </Id>
+      <Category>SHIP</Category>
+      <Volume>1.2</Volume>
+      <MaxDistance>15000</MaxDistance>
+      <Loopable>false</Loopable>
+      <Waves>
+        <Wave Type="D3">
+          <Start>Audio\SC\Hyperspace_jump.wav</Start>
         </Wave>
       </Waves>
     </Sound>

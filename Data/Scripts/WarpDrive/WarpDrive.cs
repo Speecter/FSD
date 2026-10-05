@@ -21,15 +21,42 @@ using VRageMath;
 
 namespace WarpDriveMod
 {
-    [MyEntityComponentDescriptor(typeof(MyObjectBuilder_UpgradeModule), false, "FSDriveLarge", "FSDriveSmall", "FSDriveLargeReskin", "PrototechFSDriveLarge", "PrototechFSDriveSmall")]
+    [MyEntityComponentDescriptor(typeof(MyObjectBuilder_UpgradeModule), false,
+        "FSDriveLarge", "FSDriveLarge_A",
+        "FSDriveSmall", "FSDriveSmall_A",
+        "FSDriveLargeReskin", "FSDriveLargeReskin_A", "FSDriveLargerReskin", "FSDriveLargerReskin_A",
+        "PrototechFSDriveLarge", "PrototechFSDriveLarge_S",
+        "PrototechFSDriveSmall", "PrototechFSDriveSmall_S")]
     public class WarpDrive : MyGameLogicComponent
     {
         public IMyFunctionalBlock Block { get; private set; }
         public WarpSystem System { get; private set; }
+        public HyperspaceSystem Hyperspace => System?.Hyperspace;
         public Settings Settings { get; private set; }
         public static WarpDrive Instance;
         public bool HasPower => sink.CurrentInputByType(WarpConstants.ElectricityId) >= prevRequiredPower;
         public bool BlockWasON = false;
+
+        public bool SupportsHyperspace
+        {
+            get
+            {
+                if (Block?.BlockDefinition == null) return false;
+                var sub = Block.BlockDefinition.SubtypeId;
+                return sub.EndsWith("_A") || sub.EndsWith("_S")
+                    || sub == "PrototechFSDriveLarge" || sub == "PrototechFSDriveSmall";
+            }
+        }
+
+        public bool IsPrototech
+        {
+            get
+            {
+                if (Block?.BlockDefinition == null) return false;
+                var sub = Block.BlockDefinition.SubtypeId;
+                return sub.StartsWith("PrototechFSDrive");
+            }
+        }
 
         private T CastProhibit<T>(T ptr, object val) => (T)val;
 
@@ -178,6 +205,15 @@ namespace WarpDriveMod
 
         public override void Close()
         {
+            try
+            {
+                if (Hyperspace != null)
+                {
+                    Hyperspace.Close();
+                }
+            }
+            catch { }
+
             if (System == null)
                 return;
 
@@ -201,9 +237,9 @@ namespace WarpDriveMod
 
             switch (Block.BlockDefinition.SubtypeId)
             {
-                // Updates like intels tik-tok process
                 // Vanilla >> regular power and size
                 case "FSDriveSmall":
+                case "FSDriveSmall_A":
                     powerMultiplier = 1f;
                     powerSystem.Init(MyStringHash.GetOrCompute("Utility"),
                         (float)(Settings.baseRequiredPowerSmall * Settings.powerRequirementMultiplier * powerMultiplier),
@@ -211,13 +247,11 @@ namespace WarpDriveMod
                     break;
 
                 case "FSDriveLarge":
-                    powerMultiplier = 1f;
-                    powerSystem.Init(MyStringHash.GetOrCompute("Utility"),
-                        (float)(Settings.baseRequiredPower * Settings.powerRequirementMultiplier * powerMultiplier),
-                        ComputeRequiredPower, (MyCubeBlock)Entity);               
-                    break;
-
+                case "FSDriveLarge_A":
                 case "FSDriveLargeReskin":
+                case "FSDriveLargeReskin_A":
+                case "FSDriveLargerReskin":
+                case "FSDriveLargerReskin_A":
                     powerMultiplier = 1f;
                     powerSystem.Init(MyStringHash.GetOrCompute("Utility"),
                         (float)(Settings.baseRequiredPower * Settings.powerRequirementMultiplier * powerMultiplier),
@@ -226,6 +260,7 @@ namespace WarpDriveMod
 
                 // Prototech >> ultra op, yet costs a lot
                 case "PrototechFSDriveSmall":
+                case "PrototechFSDriveSmall_S":
                     powerMultiplier = 0.5f;
                     powerSystem.Init(MyStringHash.GetOrCompute("Utility"),
                         (float)(Settings.baseRequiredPowerSmall * Settings.powerRequirementMultiplier * powerMultiplier),
@@ -233,12 +268,12 @@ namespace WarpDriveMod
                     break;
 
                 case "PrototechFSDriveLarge":
+                case "PrototechFSDriveLarge_S":
                     powerMultiplier = 0.5f;
                     powerSystem.Init(MyStringHash.GetOrCompute("Utility"),
                         (float)(Settings.baseRequiredPower * Settings.powerRequirementMultiplier * powerMultiplier),
                         ComputeRequiredPower, (MyCubeBlock)Entity);
                     break;
-               
 
                 default:
                     // No drive found - deactivated
@@ -266,7 +301,12 @@ namespace WarpDriveMod
             WarpDrive drive = Block?.GameLogic?.GetAs<WarpDrive>();
             if (drive == null)
                 return;
-            else if (drive.System.WarpState == WarpSystem.State.Idle)
+
+            var hs = drive.Hyperspace;
+            bool isHyperspaceActive = hs != null && hs.State != HyperspaceSystem.HyperState.Idle;
+            bool isWarpActive = drive.System.WarpState != WarpSystem.State.Idle;
+
+            if (!isWarpActive && !isHyperspaceActive)
                 return;
 
             if (entityName != "")
@@ -285,99 +325,208 @@ namespace WarpDriveMod
                     {
                         if (FoundCockpits.Count > 0 && FoundCockpits.Contains(dump_cockpit))
                         {
-                            if (dump_cockpit.CubeGrid.EntityId != drive.Block.CubeGrid.EntityId)
-                                return;
-
-                            drive.System.SafeTriggerON = true;
-
-                            if (MyAPIGateway.Utilities.IsDedicated || MyAPIGateway.Multiplayer.IsServer)
+                            // If Hyperspace is active, abort or emergency drop
+                            if (isHyperspaceActive)
                             {
-                                drive.System.currentSpeedPt = -1f;
-                                dump_cockpit.CubeGrid?.Physics?.ClearSpeed();
-
-                                drive.System.Dewarp(true);
-                                Block.Enabled = false;
-                                BlockWasON = true;
+                                if (hs.State == HyperspaceSystem.HyperState.Active)
+                                {
+                                    hs.ExitHyperspace();
+                                    drive.System.SendMessage("EMERGENCY DROP - SEAT VACATED", 5f, "Red");
+                                }
+                                else if (hs.State == HyperspaceSystem.HyperState.Charging || hs.State == HyperspaceSystem.HyperState.HoldingCharge || hs.State == HyperspaceSystem.HyperState.Countdown)
+                                {
+                                    hs.AbortJump("JUMP ABORTED - CREW LEFT SEAT");
+                                }
                             }
 
-                            drive.System.SafeTriggerON = false;
+                            if (isWarpActive)
+                            {
+                                if (dump_cockpit.CubeGrid.EntityId != drive.Block.CubeGrid.EntityId)
+                                    return;
+
+                                drive.System.SafeTriggerON = true;
+
+                                if (MyAPIGateway.Utilities.IsDedicated || MyAPIGateway.Multiplayer.IsServer)
+                                {
+                                    drive.System.currentSpeedPt = -1f;
+                                    dump_cockpit.CubeGrid?.Physics?.ClearSpeed();
+
+                                    drive.System.Dewarp(true);
+                                    Block.Enabled = false;
+                                    BlockWasON = true;
+                                }
+
+                                drive.System.SafeTriggerON = false;
+                            }
                         }
                     }
                 }
             }
         }
 
+        public static bool IsGridIgnored(IMyCubeGrid candidateGrid, IMyCubeGrid myGrid, long myFleetLeader)
+        {
+            if (candidateGrid == null || candidateGrid.MarkedForClose)
+                return true;
+
+            // Ignore unphysical, preview, or empty dummy grids (e.g. projections, mod placeholders)
+            if (candidateGrid.Physics == null || !candidateGrid.Physics.Enabled)
+                return true;
+
+            var cg = candidateGrid as MyCubeGrid;
+            if (cg != null && (cg.IsPreview || cg.BlocksCount == 0))
+                return true;
+
+            // Ignore shield, weaponcore, nanite, and other utility dummy entities disguised as grids
+            string candidateName = candidateGrid.DisplayName ?? candidateGrid.CustomName ?? candidateGrid.Name ?? "";
+            if (candidateName.IndexOf("shield", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                candidateName.IndexOf("dshield", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                candidateName.IndexOf("nanite", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return true;
+            }
+
+            if (myGrid != null)
+            {
+                if (candidateGrid.EntityId == myGrid.EntityId)
+                    return true;
+
+                var topCandidate = candidateGrid.GetTopMostParent();
+                var topMyGrid = myGrid.GetTopMostParent();
+                if (topCandidate != null && topMyGrid != null && topCandidate.EntityId == topMyGrid.EntityId)
+                    return true;
+
+                if (MyAPIGateway.GridGroups.HasConnection(myGrid, candidateGrid, GridLinkTypeEnum.Logical) ||
+                    MyAPIGateway.GridGroups.HasConnection(myGrid, candidateGrid, GridLinkTypeEnum.Physical) ||
+                    MyAPIGateway.GridGroups.HasConnection(myGrid, candidateGrid, GridLinkTypeEnum.Mechanical))
+                {
+                    return true;
+                }
+            }
+
+            // Fleet whitelist: Ignore Leader, Wingmen, and all their subgrids
+            if (myFleetLeader != 0L)
+            {
+                if (candidateGrid.EntityId == myFleetLeader || FleetJumpSystem.GetLeaderIdForGrid(candidateGrid.EntityId) == myFleetLeader || FleetJumpSystem.IsSameFleet(myGrid?.EntityId ?? 0L, candidateGrid.EntityId, myFleetLeader))
+                    return true;
+
+                var topCandidate = candidateGrid.GetTopMostParent();
+                if (topCandidate != null && (topCandidate.EntityId == myFleetLeader || FleetJumpSystem.GetLeaderIdForGrid(topCandidate.EntityId) == myFleetLeader || FleetJumpSystem.IsSameFleet(myGrid?.EntityId ?? 0L, topCandidate.EntityId, myFleetLeader)))
+                    return true;
+            }
+
+            return false;
+        }
+
         public bool ProxymityDangerInWarp(MatrixD gridMatrix, MyCubeGrid MainGrid, double GridSpeed)
         {
-            if (MainGrid == null)
+            if (MainGrid == null || MainGrid.Physics == null)
                 return false;
 
-            List<IMyEntity> entList;
-            IMyCubeGrid WarpGrid = MainGrid;
             Vector3D forward = gridMatrix.Forward;
-            MatrixD FrontStart = MatrixD.CreateFromDir(-forward);
-            Vector3D PointFromFront;
+            Vector3D gridCenter = MainGrid.PositionComp.WorldAABB.Center;
 
-            if (WarpGrid.GridSizeEnum == MyCubeSize.Small)
+            // Compute the ship's forward extent (front nose offset) and cross-sectional radius
+            BoundingBoxD localAABB = MainGrid.PositionComp.LocalAABB;
+            MyOrientedBoundingBoxD shipOBB = new MyOrientedBoundingBoxD(localAABB, MainGrid.WorldMatrix);
+            Vector3D[] corners = new Vector3D[8];
+            shipOBB.GetCorners(corners, 0);
+
+            double maxForwardDist = 0.0;
+            double maxPerpDist = (MainGrid.GridSizeEnum == MyCubeSize.Small) ? 2.5 : 5.0;
+
+            for (int i = 0; i < 8; i++)
             {
-                Vector3D effectOffsetSmall = forward * WarpGrid.WorldAABB.HalfExtents.AbsMax();
-                FrontStart.Translation = WarpGrid.WorldAABB.Center + effectOffsetSmall;
-                FrontStart.Translation += forward * 400.0;
-                PointFromFront = FrontStart.Translation;
-                var sphere = new BoundingSphereD(PointFromFront, 300.0);
-                entList = MyAPIGateway.Entities.GetTopMostEntitiesInSphere(ref sphere);
-            }
-            else
-            {
-                Vector3D effectOffsetLarge = forward * WarpGrid.WorldAABB.HalfExtents.AbsMax();
-                FrontStart.Translation = WarpGrid.WorldAABB.Center + effectOffsetLarge;
-                FrontStart.Translation += forward * 500.0;
-                PointFromFront = FrontStart.Translation;
-                var sphere = new BoundingSphereD(PointFromFront, 400.0);
-                entList = MyAPIGateway.Entities.GetTopMostEntitiesInSphere(ref sphere);
+                Vector3D offset = corners[i] - gridCenter;
+                double fwdProj = Vector3D.Dot(offset, forward);
+                if (fwdProj > maxForwardDist)
+                    maxForwardDist = fwdProj;
+
+                Vector3D perpOffset = offset - (forward * fwdProj);
+                double perpDist = perpOffset.Length();
+                if (perpDist > maxPerpDist)
+                    maxPerpDist = perpDist;
             }
 
+            double corridorRadius = maxPerpDist + 2.0;
+            double corridorLength = (MainGrid.GridSizeEnum == MyCubeSize.Small) ? 400.0 : 500.0;
+
+            // Start strictly outside the ship's nose to prevent self-collision
+            Vector3D startPos = gridCenter + (forward * (maxForwardDist + 5.0));
+            Vector3D endPos = startPos + (forward * corridorLength);
+            RayD flightRay = new RayD(startPos, forward);
+
+            double scanRadius = Math.Max(corridorLength * 0.55, 1500.0);
+            BoundingSphereD querySphere = new BoundingSphereD(startPos + (forward * (corridorLength * 0.5)), scanRadius);
+            var entList = MyAPIGateway.Entities.GetTopMostEntitiesInSphere(ref querySphere);
             if (entList == null || entList.Count == 0)
                 return false;
 
-            var AttachedList = new List<IMyCubeGrid>();
-
-            // get all subgrids grids and locked on landing gear.
-            MyAPIGateway.GridGroups.GetGroup(WarpGrid, GridLinkTypeEnum.Physical, AttachedList);
+            long myGridId = MainGrid.EntityId;
+            long myFleetLeader = FleetJumpSystem.GetLeaderIdForGrid(myGridId);
 
             foreach (var ent in entList)
             {
+                if (ent == null || ent.MarkedForClose) continue;
+
                 if (ent is MySafeZone)
-                    return true;
-
-                if (!(ent is MyCubeGrid || ent is MyVoxelMap))
-                    continue;
-
-                // dont stop if grid speed is 20 or above.
-                if (ent is MyVoxelMap && GridSpeed >= 333.333)
-                    continue;
-
-                if (ent is MyCubeGrid)
                 {
-                    var FoundGrid = ent as IMyCubeGrid;
+                    var sz = ent as MySafeZone;
+                    if (sz != null)
+                    {
+                        var szSphere = new BoundingSphereD(sz.PositionComp.GetPosition(), sz.Radius + corridorRadius);
+                        double? hit = szSphere.Intersects(flightRay);
+                        if (hit.HasValue && hit.Value >= 0 && hit.Value <= corridorLength)
+                            return true;
+                    }
+                    continue;
+                }
 
-                    if (FoundGrid != null && AttachedList != null && AttachedList.Count > 0 && AttachedList.Contains(FoundGrid))
+                var foundGrid = ent as IMyCubeGrid;
+                if (foundGrid != null)
+                {
+                    if (IsGridIgnored(foundGrid, MainGrid, myFleetLeader))
                         continue;
-                }
 
-                var EntityPosition = ent.GetPosition() + Vector3D.Zero;
-
-                if (WarpGrid.GridSizeEnum == MyCubeSize.Small)
-                {
-                    if ((EntityPosition - PointFromFront).Length() <= 250.0)
-                        return true;
+                    // 3D Capsule-to-Box Corridor Check
+                    BoundingSphereD obstacleSphere = foundGrid.PositionComp.WorldVolume;
+                    Vector3D seg = endPos - startPos;
+                    double segLenSq = seg.LengthSquared();
+                    double t = (segLenSq > 1e-6) ? MathHelper.Clamp(Vector3D.Dot(obstacleSphere.Center - startPos, seg) / segLenSq, 0.0, 1.0) : 0.0;
+                    Vector3D closestPt = startPos + (seg * t);
+                    double maxDist = obstacleSphere.Radius + corridorRadius;
+                    if (Vector3D.DistanceSquared(obstacleSphere.Center, closestPt) <= maxDist * maxDist)
+                    {
+                        Vector3D localPt = Vector3D.Transform(closestPt, foundGrid.PositionComp.WorldMatrixInvScaled);
+                        double localDistSq = ((BoundingBoxD)foundGrid.PositionComp.LocalAABB).DistanceSquared(localPt);
+                        if (localDistSq <= corridorRadius * corridorRadius)
+                            return true;
+                    }
                 }
-                else
+                else if (ent is MyVoxelBase)
                 {
-                    if (ent is MyVoxelMap && (EntityPosition - PointFromFront).Length() <= 280.0)
-                        return true;
-                    else if ((EntityPosition - PointFromFront).Length() <= 220.0)
-                        return true;
+                    // Don't drop if grid speed is 20 (333.33 km/s) or above
+                    if (GridSpeed >= 333.333)
+                        continue;
+
+                    var voxel = ent as MyVoxelBase;
+                    if (voxel == null) continue;
+
+                    // Ignore planets and planet terrain physics chunks
+                    if (voxel is MyPlanet || (voxel as MyVoxelBase)?.RootVoxel is MyPlanet)
+                        continue;
+
+                    double asteroidScanDist = Math.Max(corridorLength, 2500.0);
+                    BoundingBoxD asteroidCorridorBox = new BoundingBoxD(
+                        Vector3D.Min(startPos, startPos + forward * asteroidScanDist) - new Vector3D(corridorRadius),
+                        Vector3D.Max(startPos, startPos + forward * asteroidScanDist) + new Vector3D(corridorRadius)
+                    );
+
+                    if (voxel.PositionComp.WorldAABB.Intersects(asteroidCorridorBox))
+                    {
+                        if (voxel.GetIntersectionWithAABB(ref asteroidCorridorBox))
+                            return true;
+                    }
                 }
             }
             return false;
@@ -388,65 +537,119 @@ namespace WarpDriveMod
             if (WarpGrid == null || WarpGrid.Physics == null)
                 return false;
 
-            List<IMyEntity> entList;
             Vector3D forward = gridMatrix.Forward;
-            MatrixD FrontStart = MatrixD.CreateFromDir(-forward);
-            Vector3D PointFromFront;
+            Vector3D gridCenter = WarpGrid.PositionComp.WorldAABB.Center;
 
-            if (MyAPIGateway.Session?.Player != null)
+            // Compute the ship's forward extent (front nose offset) and cross-sectional radius
+            BoundingBoxD localAABB = WarpGrid.PositionComp.LocalAABB;
+            MyOrientedBoundingBoxD shipOBB = new MyOrientedBoundingBoxD(localAABB, WarpGrid.WorldMatrix);
+            Vector3D[] corners = new Vector3D[8];
+            shipOBB.GetCorners(corners, 0);
+
+            double maxForwardDist = 0.0;
+            double maxPerpDist = (WarpGrid.GridSizeEnum == MyCubeSize.Small) ? 2.5 : 5.0;
+
+            for (int i = 0; i < 8; i++)
             {
-                bool allowed = MySessionComponentSafeZones.IsActionAllowed(MyAPIGateway.Session.Player.Character.WorldMatrix.Translation, CastProhibit(MySessionComponentSafeZones.AllowedActions, 1));
-                if (!allowed)
-                    return true;
+                Vector3D offset = corners[i] - gridCenter;
+                double fwdProj = Vector3D.Dot(offset, forward);
+                if (fwdProj > maxForwardDist)
+                    maxForwardDist = fwdProj;
+
+                Vector3D perpOffset = offset - (forward * fwdProj);
+                double perpDist = perpOffset.Length();
+                if (perpDist > maxPerpDist)
+                    maxPerpDist = perpDist;
             }
 
-            if (WarpGrid.GridSizeEnum == MyCubeSize.Small)
-            {
-                Vector3D effectOffsetSmall = forward * WarpGrid.WorldAABB.HalfExtents.AbsMax();
-                FrontStart.Translation = WarpGrid.WorldAABB.Center + effectOffsetSmall;
-                FrontStart.Translation += forward * 400.0;
-                PointFromFront = FrontStart.Translation;
-                var sphere = new BoundingSphereD(PointFromFront, 300.0);
-                entList = MyAPIGateway.Entities.GetTopMostEntitiesInSphere(ref sphere);
-            }
-            else
-            {
-                Vector3D effectOffsetLarge = forward * WarpGrid.WorldAABB.HalfExtents.AbsMax();
-                FrontStart.Translation = WarpGrid.WorldAABB.Center + effectOffsetLarge;
-                FrontStart.Translation += forward * 500.0;
-                PointFromFront = FrontStart.Translation;
-                var sphere = new BoundingSphereD(PointFromFront, 400.0);
-                entList = MyAPIGateway.Entities.GetTopMostEntitiesInSphere(ref sphere);
-            }
+            double corridorRadius = maxPerpDist + 2.0;
+            double corridorLength = (WarpGrid.GridSizeEnum == MyCubeSize.Small) ? 400.0 : 500.0;
 
+            // Start strictly outside the ship's nose to prevent self-collision
+            Vector3D startPos = gridCenter + (forward * (maxForwardDist + 5.0));
+            Vector3D endPos = startPos + (forward * corridorLength);
+            RayD flightRay = new RayD(startPos, forward);
+
+            double scanRadius = Math.Max(corridorLength * 0.55, 1500.0);
+            BoundingSphereD querySphere = new BoundingSphereD(startPos + (forward * (corridorLength * 0.5)), scanRadius);
+            var entList = MyAPIGateway.Entities.GetTopMostEntitiesInSphere(ref querySphere);
             if (entList == null || entList.Count == 0)
                 return false;
 
-            var AttachedList = new List<IMyCubeGrid>();
-
-            // get all subgrids grids and locked on landing gear.
-            MyAPIGateway.GridGroups.GetGroup(WarpGrid, GridLinkTypeEnum.Physical, AttachedList);
+            long myGridId = WarpGrid.EntityId;
+            long myFleetLeader = FleetJumpSystem.GetLeaderIdForGrid(myGridId);
 
             foreach (var ent in entList)
             {
+                if (ent == null || ent.MarkedForClose) continue;
+
                 if (ent is MySafeZone)
-                    return true;
-
-                if (!(ent is MyCubeGrid || ent is MyVoxelMap))
-                    continue;
-
-                if (ent is MyCubeGrid)
                 {
-                    var FoundGrid = ent as IMyCubeGrid;
-
-                    if (FoundGrid != null && AttachedList != null && AttachedList.Count > 0 && AttachedList.Contains(FoundGrid))
-                        continue;
+                    var sz = ent as MySafeZone;
+                    if (sz != null)
+                    {
+                        var szSphere = new BoundingSphereD(sz.PositionComp.GetPosition(), sz.Radius + corridorRadius);
+                        double? hit = szSphere.Intersects(flightRay);
+                        if (hit.HasValue && hit.Value >= 0 && hit.Value <= corridorLength)
+                        {
+                            MyAPIGateway.Utilities.ShowNotification("Can't Start FSD - SafeZone in flight path!", 4000, "Red");
+                            return true;
+                        }
+                    }
+                    continue;
                 }
 
-                var EntityPosition = ent.PositionComp.GetPosition() + Vector3D.Zero;
+                var foundGrid = ent as IMyCubeGrid;
+                if (foundGrid != null)
+                {
+                    if (IsGridIgnored(foundGrid, WarpGrid, myFleetLeader))
+                        continue;
 
-                if ((EntityPosition - PointFromFront).Length() <= 250.0)
-                    return true;
+                    // 3D Capsule-to-Box Corridor Check
+                    BoundingSphereD obstacleSphere = foundGrid.PositionComp.WorldVolume;
+                    Vector3D seg = endPos - startPos;
+                    double segLenSq = seg.LengthSquared();
+                    double t = (segLenSq > 1e-6) ? MathHelper.Clamp(Vector3D.Dot(obstacleSphere.Center - startPos, seg) / segLenSq, 0.0, 1.0) : 0.0;
+                    Vector3D closestPt = startPos + (seg * t);
+                    double maxDist = obstacleSphere.Radius + corridorRadius;
+                    if (Vector3D.DistanceSquared(obstacleSphere.Center, closestPt) <= maxDist * maxDist)
+                    {
+                        Vector3D localPt = Vector3D.Transform(closestPt, foundGrid.PositionComp.WorldMatrixInvScaled);
+                        double localDistSq = ((BoundingBoxD)foundGrid.PositionComp.LocalAABB).DistanceSquared(localPt);
+                        if (localDistSq <= corridorRadius * corridorRadius)
+                        {
+                            string gridName = !string.IsNullOrWhiteSpace(foundGrid.DisplayName) ? foundGrid.DisplayName :
+                                              (!string.IsNullOrWhiteSpace(foundGrid.CustomName) ? foundGrid.CustomName : "Ship/Station");
+                            MyAPIGateway.Utilities.ShowNotification($"Can't Start FSD - Obstacle ahead: {gridName}", 4000, "Red");
+                            return true;
+                        }
+                    }
+                }
+                else if (ent is MyVoxelBase)
+                {
+                    var voxel = ent as MyVoxelBase;
+                    if (voxel == null) continue;
+
+                    // Ignore planets and planet terrain physics chunks
+                    if (voxel is MyPlanet || (voxel as MyVoxelBase)?.RootVoxel is MyPlanet)
+                        continue;
+
+                    // Asteroids: check actual voxel geometry inside the flight corridor (up to 2.5km)
+                    double asteroidScanDist = Math.Max(corridorLength, 2500.0);
+                    BoundingBoxD asteroidCorridorBox = new BoundingBoxD(
+                        Vector3D.Min(startPos, startPos + forward * asteroidScanDist) - new Vector3D(corridorRadius),
+                        Vector3D.Max(startPos, startPos + forward * asteroidScanDist) + new Vector3D(corridorRadius)
+                    );
+
+                    if (voxel.PositionComp.WorldAABB.Intersects(asteroidCorridorBox))
+                    {
+                        if (voxel.GetIntersectionWithAABB(ref asteroidCorridorBox))
+                        {
+                            MyAPIGateway.Utilities.ShowNotification("Can't Start FSD - Asteroid in flight path!", 4000, "Red");
+                            return true;
+                        }
+                    }
+                }
             }
 
             return false;
@@ -464,48 +667,32 @@ namespace WarpDriveMod
             if (entList == null || entList.Count == 0)
                 return false;
 
-            var AttachedList = new List<IMyCubeGrid>();
-
-            // get all subgrids grids and locked on landing gear.
-            MyAPIGateway.GridGroups.GetGroup(WarpGrid, GridLinkTypeEnum.Physical, AttachedList);
-
             var WarpGridOwner = WarpGrid.BigOwners.FirstOrDefault();
             var WarpGridFaction = MyAPIGateway.Session.Factions.TryGetPlayerFaction(WarpGridOwner);
+            long myFleetLeader = FleetJumpSystem.GetLeaderIdForGrid(WarpGrid.EntityId);
 
             foreach (var ent in entList)
             {
-                if (!(ent is MyCubeGrid))
+                var FoundGrid = ent as IMyCubeGrid;
+                if (FoundGrid == null || IsGridIgnored(FoundGrid, WarpGrid, myFleetLeader))
                     continue;
 
-                if (ent is MyCubeGrid)
+                if (FoundGrid.BigOwners != null && FoundGrid.BigOwners.Count > 0 && FoundGrid.BigOwners.FirstOrDefault() != 0L)
                 {
-                    var FoundGrid = ent as IMyCubeGrid;
+                    var FoundGridOwner = FoundGrid.BigOwners.FirstOrDefault();
 
-                    if (FoundGrid != null && AttachedList != null && AttachedList.Count > 0 && AttachedList.Contains(FoundGrid))
+                    if (FoundGridOwner == WarpGridOwner)
                         continue;
 
-                    if (FoundGrid.BigOwners != null && FoundGrid.BigOwners.FirstOrDefault() != 0L)
-                    {
-                        var FoundGridOwner = FoundGrid.BigOwners.FirstOrDefault();
+                    var FoundGridFaction = MyAPIGateway.Session.Factions.TryGetPlayerFaction(FoundGridOwner);
 
-                        if (FoundGridOwner == WarpGridOwner)
+                    if (WarpGridFaction != null && FoundGridFaction != null)
+                    {
+                        if (FoundGridFaction.FactionId == WarpGridFaction.FactionId)
                             continue;
 
-                        var FoundGridFaction = MyAPIGateway.Session.Factions.TryGetPlayerFaction(FoundGridOwner);
-
-                        if (WarpGridFaction != null && FoundGridFaction != null)
-                        {
-                            if (FoundGridFaction.FactionId == WarpGridFaction.FactionId)
-                                continue;
-
-                            var FactionsRelationship = MyAPIGateway.Session.Factions.GetRelationBetweenFactions(FoundGridFaction.FactionId, WarpGridFaction.FactionId);
-                            if (FactionsRelationship != MyRelationsBetweenFactions.Enemies)
-                                continue;
-
-                            // found enenmy grid in sphere!
-                            return true;
-                        }
-                        else
+                        var FactionsRelationship = MyAPIGateway.Session.Factions.GetRelationBetweenFactions(FoundGridFaction.FactionId, WarpGridFaction.FactionId);
+                        if (FactionsRelationship == MyRelationsBetweenFactions.Enemies)
                             return true;
                     }
                 }

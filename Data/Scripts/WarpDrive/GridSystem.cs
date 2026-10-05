@@ -1,4 +1,4 @@
-﻿using Sandbox.Game.Entities;
+using Sandbox.Game.Entities;
 using Sandbox.ModAPI;
 using System;
 using System.Collections.Generic;
@@ -263,7 +263,7 @@ namespace WarpDriveMod
             return false;
         }
 
-        private IMyShipController FindMainCockpit()
+        public IMyShipController FindMainCockpit()
         {
             if (grids.Count == 0)
                 return null;
@@ -292,8 +292,15 @@ namespace WarpDriveMod
                 return null;
 
             HashSet<IMyShipController> gridCockpits;
-            if (cockpits.TryGetValue(MainGrid, out gridCockpits))
+            if (cockpits.TryGetValue(MainGrid, out gridCockpits) && gridCockpits != null)
+            {
+                foreach (var sc in gridCockpits)
+                {
+                    if (sc != null && sc.IsFunctional)
+                        return sc;
+                }
                 return gridCockpits.FirstElement();
+            }
 
             return null;
         }
