@@ -15,5 +15,16 @@
       </Blocks>
     </BlockVariantGroup>
 
+    <BlockVariantGroup>
+      <Id Type="MyObjectBuilder_BlockVariantGroup" Subtype="SinkFSDGroup" />
+      <Blocks>
+        <Block Type="MyObjectBuilder_UpgradeModule" Subtype="HeatSinkLarge" />
+        <Block Type="MyObjectBuilder_UpgradeModule" Subtype="HeatSinkSmall" />
+
+        <Block Type="MyObjectBuilder_UpgradeModule" Subtype="HeatSinkVentLarge" />
+        <Block Type="MyObjectBuilder_UpgradeModule" Subtype="HeatSinkVentSmall" />
+      </Blocks>
+    </BlockVariantGroup>
+
   </BlockVariantGroups>
 </Definitions>
