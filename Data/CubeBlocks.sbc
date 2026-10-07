@@ -9,11 +9,13 @@
       </Id>
       <DisplayName>D5 Frameshift Drive</DisplayName>
       <Icon>Textures\GUI\Icons\Cubes\FSDriveSmall.dds</Icon>
-      <Description>Compact model with the same capabilities as the S7 drive. Only one drive is active at a time per grid. Installing additional FSDs will not have any benefits.
-      Top Speed: 50km/s
-      Minimum power use: 20MW (Actual use will be much higher)
-      Gravity Glide max speed: 3km/s
-      Gravity Glide max gravity 0.2G</Description>
+      <Description>Compact version of the S7 drive. Only one drive is active at a time per grid.
+Top speed: 50km/s
+Heat gen rate: 1/sec per 10mw in use
+Heat capacity: 400
+Heat dissipation rate: 2/sec
+Gravity Glide max speed: 3km/s
+Gravity Glide max gravity 0.2G</Description>
       <CubeSize>Small</CubeSize>
       <BlockTopology>TriangleMesh</BlockTopology>
       <Size x="3" y="3" z="2" />
@@ -70,11 +72,13 @@
       </Id>
       <DisplayName>S7 Frameshift Drive</DisplayName>
       <Icon>Textures\GUI\Icons\Cubes\FSDriveLarge.dds</Icon>
-      <Description>Friendship Drive charging! Only one drive is active at a time per grid. Installing additional FSDs will not have any benefits.
-      Top Speed: 50km/s
-      Minimum power use: 20MW (Actual use will be much higher)
-      Gravity Glide max speed: 3km/s
-      Gravity Glide max gravity 0.2G</Description>
+      <Description>Friendship Drive charging! Only one drive is active at a time per grid.
+Top speed: 50km/s
+Heat gen rate: 1/sec per 10mw in use
+Heat capacity: 2000
+Heat dissipation rate: 10/sec
+Gravity Glide max speed: 3km/s
+Gravity Glide max gravity 0.2G</Description>
       <CubeSize>Large</CubeSize>
       <BlockTopology>TriangleMesh</BlockTopology>
       <Size x="3" y="3" z="2" />
@@ -129,13 +133,15 @@
         <TypeId>UpgradeModule</TypeId>
         <SubtypeId>FSDriveLargeReskin</SubtypeId>
       </Id>
-      <DisplayName>S7 Frameshift Drive Type II</DisplayName>
+      <DisplayName>S7-B Frameshift Drive</DisplayName>
 			<Icon>Textures\GUI\Icons\Cubes\JumpDriveReskin.dds</Icon>
-      <Description>Friendship Drive charging! Only one drive is active at a time per grid. Installing additional FSDs will not have any benefits.
-      Top Speed: 50km/s
-      Minimum power use: 20MW (Actual use will be much higher)
-      Gravity Glide max speed: 3km/s
-      Gravity Glide max gravity 0.2G</Description>
+      <Description>Friendship Drive charging! Only one drive is active at a time per grid.
+Top speed: 50km/s
+Heat gen rate: 1/sec per 10mw in use
+Heat capacity: 2000
+Heat dissipation rate: 10/sec
+Gravity Glide max speed: 3km/s
+Gravity Glide max gravity 0.2G</Description>
       <CubeSize>Large</CubeSize>
       <BlockTopology>TriangleMesh</BlockTopology>
 			<Size x="3" y="2" z="3" />
@@ -199,14 +205,15 @@
         <TypeId>UpgradeModule</TypeId>
         <SubtypeId>PrototechFSDriveLarge</SubtypeId>
       </Id>
-      <Public>true</Public>
       <DisplayName>Prototech S77 Frameshift Drive</DisplayName>
       <Icon>Textures\GUI\Icons\Cubes\PrototechFSDriveLarge.dds</Icon>
-      <Description>Prototech-outfitted FSD for best perfomance. Only one drive is active at a time per grid. Installing additional FSDs will not have any benefits.
-      Top Speed: 50km/s
-      Minimum power use: 20MW (Actual use will be much higher)
-      Gravity Glide max speed: 3km/s
-      Gravity Glide max gravity 0.2G</Description>
+      <Description>Prototech-outfitted S7 FSD. Only one drive is active at a time per grid.
+Top speed: 50km/s
+Heat gen rate: 1/sec per 15mw in use
+Heat capacity: 3000
+Heat dissipation rate: 10/sec
+Gravity Glide max speed: 3km/s
+Gravity Glide max gravity 0.2G</Description>
       <CubeSize>Large</CubeSize>
       <BlockTopology>TriangleMesh</BlockTopology>
       <Size x="3" y="3" z="3" />
@@ -215,27 +222,27 @@
       <Model>Models\Cubes\Large\Prototech_JumpDrive.mwm</Model>
       <Components>
         <Component Subtype="PrototechFrame" Count="1">
-                    <DeconstructId>
-                        <TypeId>Ingot</TypeId>
-                        <SubtypeId>PrototechScrap</SubtypeId>
-                    </DeconstructId>
-                </Component>
+          <DeconstructId>
+            <TypeId>Ingot</TypeId>
+            <SubtypeId>PrototechScrap</SubtypeId>
+          </DeconstructId>
+        </Component>
         <Component Subtype="MetalGrid" Count="120" />
         <Component Subtype="GravityGenerator" Count="40" />
         <Component Subtype="Detector" Count="40" />
         <Component Subtype="PrototechCapacitor" Count="40">
-                      <DeconstructId>
-                        <TypeId>Ingot</TypeId>
-                        <SubtypeId>PrototechScrap</SubtypeId>
-                    </DeconstructId>
-                </Component>
+            <DeconstructId>
+            <TypeId>Ingot</TypeId>
+            <SubtypeId>PrototechScrap</SubtypeId>
+          </DeconstructId>
+        </Component>
         <Component Subtype="Superconductor" Count="2000" />
         <Component Subtype="PrototechCircuitry" Count="20">
-                    <DeconstructId>
-                        <TypeId>Ingot</TypeId>
-                        <SubtypeId>PrototechScrap</SubtypeId>
-                    </DeconstructId>
-                </Component>
+          <DeconstructId>
+            <TypeId>Ingot</TypeId>
+            <SubtypeId>PrototechScrap</SubtypeId>
+          </DeconstructId>
+        </Component>
         <Component Subtype="Computer" Count="200" />
         <Component Subtype="Construction" Count="120" />
         <Component Subtype="SteelPlate" Count="100" />
@@ -278,14 +285,15 @@
         <TypeId>UpgradeModule</TypeId>
         <SubtypeId>PrototechFSDriveSmall</SubtypeId>
       </Id>
-      <Public>true</Public>
       <DisplayName>Prototech D55 Frameshift Drive</DisplayName>
       <Icon>Textures\GUI\Icons\Cubes\PrototechFSDriveSmall.dds</Icon>
-      <Description>Factorum-modified version of D5. Only one drive is active at a time per grid. Installing additional FSDs will not have any benefits.
-      Top Speed: 50km/s
-      Minimum power use: 20MW (Actual use will be much higher)
-      Gravity Glide max speed: 3km/s
-      Gravity Glide max gravity 0.2G</Description>
+      <Description>Prototech-outfitted D5 FSD. Only one drive is active at a time per grid.
+Top speed: 50km/s
+Heat gen rate: 1/sec per 15mw in use
+Heat capacity: 600
+Heat dissipation rate: 2/sec
+Gravity Glide max speed: 3km/s
+Gravity Glide max gravity 0.2G</Description>
       <CubeSize>Small</CubeSize>
       <BlockTopology>TriangleMesh</BlockTopology>
       <Size x="3" y="3" z="4" />
@@ -293,28 +301,28 @@
       <ModelOffset x="0" y="0" z="0" />
       <Model>Models\Cubes\Small\Prototech_JumpDrive.mwm</Model>
       <Components>
-      <Component Subtype="PrototechFrame" Count="1">
-                    <DeconstructId>
-                        <TypeId>Ingot</TypeId>
-                        <SubtypeId>PrototechScrap</SubtypeId>
-                    </DeconstructId>
-                </Component>
+        <Component Subtype="PrototechFrame" Count="1">
+          <DeconstructId>
+           <TypeId>Ingot</TypeId>
+            <SubtypeId>PrototechScrap</SubtypeId>
+          </DeconstructId>
+        </Component>
         <Component Subtype="MetalGrid" Count="40" />
         <Component Subtype="GravityGenerator" Count="40" />
         <Component Subtype="Detector" Count="40" />
         <Component Subtype="PrototechCapacitor" Count="40">
-                      <DeconstructId>
-                        <TypeId>Ingot</TypeId>
-                        <SubtypeId>PrototechScrap</SubtypeId>
-                    </DeconstructId>
-                </Component>
+            <DeconstructId>
+            <TypeId>Ingot</TypeId>
+            <SubtypeId>PrototechScrap</SubtypeId>
+          </DeconstructId>
+        </Component>
         <Component Subtype="Superconductor" Count="2000" />
         <Component Subtype="PrototechCircuitry" Count="20">
-                    <DeconstructId>
-                        <TypeId>Ingot</TypeId>
-                        <SubtypeId>PrototechScrap</SubtypeId>
-                    </DeconstructId>
-                </Component>
+          <DeconstructId>
+            <TypeId>Ingot</TypeId>
+            <SubtypeId>PrototechScrap</SubtypeId>
+          </DeconstructId>
+        </Component>
         <Component Subtype="Computer" Count="200" />
         <Component Subtype="Construction" Count="40" />
         <Component Subtype="SteelPlate" Count="20" />
