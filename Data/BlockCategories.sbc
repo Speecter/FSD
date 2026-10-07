@@ -13,6 +13,10 @@
       <ItemIds>
         <string>UpgradeModule/FSDriveLarge</string>
         <string>UpgradeModule/FSDriveLargeReskin</string>
+        <string>UpgradeModule/PrototechFSDriveLarge</string>
+        
+        <string>UpgradeModule/HeatSinkLarge</string>
+        <string>UpgradeModule/HeatSinkVentLarge</string>
       </ItemIds>
     </Category>
 
@@ -26,6 +30,10 @@
       <StrictSearch>true</StrictSearch>
       <ItemIds>
         <string>UpgradeModule/FSDriveSmall</string>
+        <string>UpgradeModule/PrototechFSDriveSmall</string>
+
+        <string>UpgradeModule/HeatSinkSmall</string>
+        <string>UpgradeModule/HeatSinkVentSmall</string>
       </ItemIds>
     </Category>
 
