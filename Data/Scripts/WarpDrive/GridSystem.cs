@@ -1,4 +1,4 @@
-﻿using Sandbox.Game.Entities;
+using Sandbox.Game.Entities;
 using Sandbox.ModAPI;
 using System;
 using System.Collections.Generic;
@@ -11,39 +11,19 @@ namespace WarpDriveMod
 {
     public class GridSystem : IEquatable<GridSystem>
     {
-        /// <summary>
-        /// True if at least 1 of the grids in the system is static.
-        /// </summary>
-        public bool IsStatic => staticCount > 0;
-        public bool Valid => IsValid();
-        public long InvalidOn { get; private set; }
-        public Dictionary<string, BlockCounter> BlockCounters { get; private set; } = new Dictionary<string, BlockCounter>();
-        public IReadOnlyCollection<MyCubeGrid> Grids => grids;
-        public int Id { get; private set; }
-        public MyCubeGrid MainGrid
-        {
-            get
-            {
-                foreach (var grid in grids)
-                {
-                    if (grid == null)
-                        continue;
-
-                    return grid;
-                }
-
-                return null;
-            }
-        }
+        public bool isStatic => staticCount > 0;
+        public bool valid => IsValid();
+        private long lastValidTick;
+        public Dictionary<string, BlockCounter> blockCounters { get; private set; } = new Dictionary<string, BlockCounter>();
+        public int id { get; private set; }
+        public MyCubeGrid mainGrid => gridGroup.Min as MyCubeGrid;
 
         private int staticCount;
-        public Dictionary<MyCubeGrid, HashSet<IMyShipController>> cockpits = new Dictionary<MyCubeGrid, HashSet<IMyShipController>>();
-        private readonly SortedSet<MyCubeGrid> grids = new SortedSet<MyCubeGrid>(new GridByCount());
+        public Dictionary<MyCubeGrid, HashSet<HeatSink>> heatSinks = new Dictionary<MyCubeGrid, HashSet<HeatSink>>();
+        public readonly SortedSet<IMyCubeGrid> gridGroup = new SortedSet<IMyCubeGrid>(new GridByCount());
+        private readonly HashSet<IMyCubeGrid> gridGroupOld = new HashSet<IMyCubeGrid>();
         private bool _valid = true;
 
-        /// <summary>
-        /// Called when a grid no longer belongs to this grid system.
-        /// </summary>
         public event Action<GridSystem> OnSystemInvalidated;
 
         public GridSystem(MyCubeGrid firstGrid)
@@ -51,39 +31,33 @@ namespace WarpDriveMod
             if (firstGrid == null)
                 throw new NullReferenceException("Attempt to create a grid using a null grid.");
 
-            Id = WarpDriveSession.Instance.Rand.Next(int.MinValue, int.MaxValue);
+            id = WarpDriveSession.instance.rand.Next(int.MinValue, int.MaxValue);
             if (firstGrid.MarkedForClose)
                 return;
 
-            List<IMyCubeGrid> connectedGrids = new List<IMyCubeGrid>();
-            MyAPIGateway.GridGroups.GetGroup(firstGrid, GridLinkTypeEnum.Logical, connectedGrids);
+            MyAPIGateway.GridGroups.GetGroup(firstGrid, GridLinkTypeEnum.Logical, gridGroup);
+            gridGroupOld.UnionWith(gridGroup);
 
-            foreach (IMyCubeGrid grid in connectedGrids)
-            {
-                if (!Add((MyCubeGrid)grid))
-                    throw new ArgumentException($"Invalid add state with {firstGrid.EntityId} and {grid.EntityId}");
-            }
+            foreach (IMyCubeGrid grid in gridGroupOld)
+                Add((MyCubeGrid)grid);
         }
 
         public bool Contains(MyCubeGrid grid)
         {
-            return grids.Contains(grid);
+            return gridGroup.Contains(grid);
         }
 
-        private bool Add(MyCubeGrid grid)
+        private void Add(MyCubeGrid grid)
         {
             if (grid == null)
                 throw new NullReferenceException("Attempt to add a null grid.");
-
-            if (!grids.Add(grid))
-                throw new ArgumentException("Grid already exists.");
 
             if (grid.IsStatic)
                 staticCount++;
 
             grid.OnBlockAdded += Grid_OnBlockAdded;
             grid.OnBlockRemoved += Grid_OnBlockRemoved;
-            grid.OnStaticChanged += Grid_OnIsStaticChanged;
+            grid.OnStaticChanged += OnIsStaticChanged;
             grid.OnClose += Grid_OnClose;
             grid.OnGridSplit += Grid_OnGridSplit;
 
@@ -91,43 +65,44 @@ namespace WarpDriveMod
             {
                 Grid_OnBlockAdded(s.SlimBlock);
             }
-
-            return true;
         }
 
         public void AddCounter(string key, BlockCounter counter)
         {
-            foreach (MyCubeGrid grid in grids)
+            foreach (MyCubeGrid grid in gridGroup)
             {
                 foreach (MyCubeBlock block in grid.GetFatBlocks())
                 {
                     counter.TryAddCount(block);
                 }
             }
-            BlockCounters[key] = counter;
+            blockCounters[key] = counter;
         }
 
         private void Grid_OnBlockRemoved(IMySlimBlock obj)
         {
             MyCubeGrid grid = (MyCubeGrid)obj.CubeGrid;
             IMyCubeBlock fat = obj.FatBlock;
-            if (fat == null || grid == null)
+            if (grid == null)
                 return;
 
-            foreach (BlockCounter counter in BlockCounters.Values)
+            HashSet<HeatSink> gridSinks;
+            if (heatSinks.TryGetValue(grid, out gridSinks))
+            {
+                foreach (HeatSink queuedSink in gridSinks)
+                    WarpDriveSession.instance?.QueueExposureCheck(queuedSink);
+            }
+
+            if (fat == null)
+                return;
+
+            foreach (BlockCounter counter in blockCounters.Values)
             {
                 counter.TryRemoveCount(fat);
             }
 
-            if (IsShipController(fat))
-            {
-                HashSet<IMyShipController> gridCockpits;
-                if (cockpits.TryGetValue(grid, out gridCockpits))
-                {
-                    gridCockpits.Remove((IMyShipController)fat);
-                    cockpits[grid] = gridCockpits;
-                }
-            }
+            if (gridSinks != null && fat.GameLogic?.GetAs<HeatSink>() != null)
+                gridSinks.RemoveWhere(tracked => tracked == null || tracked.block == null || tracked.block == fat);
 
             Resort(grid);
         }
@@ -136,35 +111,35 @@ namespace WarpDriveMod
         {
             MyCubeGrid grid = (MyCubeGrid)obj.CubeGrid;
             IMyCubeBlock fat = obj.FatBlock;
-            if (fat == null || grid == null)
+            if (grid == null)
                 return;
 
-            foreach (BlockCounter counter in BlockCounters.Values)
+            HashSet<HeatSink> gridSinks;
+            if (heatSinks.TryGetValue(grid, out gridSinks))
+            {
+                foreach (HeatSink queuedSink in gridSinks)
+                    WarpDriveSession.instance?.QueueExposureCheck(queuedSink);
+            }
+
+            if (fat == null)
+                return;
+
+            foreach (BlockCounter counter in blockCounters.Values)
             {
                 counter.TryAddCount(fat);
             }
 
-            if (IsShipController(fat))
-            {
-                HashSet<IMyShipController> gridCockpits;
-                if (!cockpits.TryGetValue(grid, out gridCockpits))
-                {
-                    gridCockpits = new HashSet<IMyShipController>
-                    {
-                        (IMyShipController)fat
-                    };
-                    cockpits[grid] = gridCockpits;
-                }
-                else
-                    gridCockpits.Add((IMyShipController)fat);
-            }
+                HeatSink heatSink = fat.GameLogic?.GetAs<HeatSink>();
+                if (heatSink != null)
+                    AddSink(grid, heatSink);
+
             Resort(grid);
         }
 
         public void Resort(MyCubeGrid grid)
         {
-            if (grids.Remove(grid))
-                grids.Add(grid);
+            if (gridGroup.Remove(grid))
+                gridGroup.Add(grid);
         }
 
         private void Grid_OnClose(IMyEntity obj)
@@ -177,189 +152,118 @@ namespace WarpDriveMod
             Invalidate();
         }
 
-        public bool IsValid()
+         public bool IsValid(bool forceCheck = false)
         {
-            if (!_valid || InvalidOn == WarpDriveSession.Instance.Runtime)
+            if (!_valid || (!forceCheck && lastValidTick == WarpDriveSession.instance.runtime))
                 return _valid;
 
-            // Update the state of the Valid bool
-            if (grids.Count > 0 && grids.Count == 1)
+            if (gridGroup.Count == 0 || mainGrid == null)
             {
-                InvalidOn = WarpDriveSession.Instance.Runtime;
-                return true;
-            }
-            else
-            {
-                if (grids.Count > 1 && MainGrid != null)
-                {
-                    var realCountList = new List<IMyCubeGrid>();
-                    MyAPIGateway.GridGroups.GetGroup(MainGrid, GridLinkTypeEnum.Logical, realCountList);
-                    if (grids.Count == realCountList.Count)
-                    {
-                        InvalidOn = WarpDriveSession.Instance.Runtime;
-                        return true;
-                    }
-                    else
-                    {
-                        Invalidate();
-                        return false;
-                    }
-                }
-
                 Invalidate();
                 return false;
             }
+
+            MyCubeGrid main = mainGrid;
+            gridGroup.Clear();
+            MyAPIGateway.GridGroups.GetGroup(main, GridLinkTypeEnum.Logical, gridGroup);
+
+            if (gridGroupOld.SetEquals(gridGroup))
+            {
+                lastValidTick = WarpDriveSession.instance.runtime;
+                return true;
+            }
+
+            Invalidate();
+            return false;
         }
 
         public void Invalidate()
         {
+            if (!_valid)
+                return;
+
             _valid = false;
             OnSystemInvalidated?.Invoke(this);
             OnSystemInvalidated = null;
-            foreach (BlockCounter counter in BlockCounters.Values)
+            foreach (BlockCounter counter in blockCounters.Values)
             {
                 counter.Dispose();
             }
 
-            foreach (MyCubeGrid grid in grids)
+            foreach (MyCubeGrid grid in gridGroupOld)
             {
                 grid.OnBlockAdded -= Grid_OnBlockAdded;
                 grid.OnBlockRemoved -= Grid_OnBlockRemoved;
-                grid.OnStaticChanged -= Grid_OnIsStaticChanged;
+                grid.OnStaticChanged -= OnIsStaticChanged;
                 grid.OnClose -= Grid_OnClose;
                 grid.OnGridSplit -= Grid_OnGridSplit;
             }
         }
 
-        private void Grid_OnIsStaticChanged(MyCubeGrid arg1, bool arg2)
+        private void OnIsStaticChanged(MyCubeGrid arg1, bool arg2)
         {
-            if (arg1.IsStatic)
-                staticCount++;
-            else
-                staticCount--;
+            staticCount += arg1.IsStatic ? 1 : -1;
         }
 
-        #region WorldMatrix
-
-        public bool IsShipController(IMyCubeBlock block)
+        public void AddSink(MyCubeGrid grid, HeatSink heatSink)
         {
-            if (block == null || !(block is IMyTerminalBlock) || block is IMyCryoChamber)
-                return false;
-
-            return (block as IMyShipController)?.CanControlShip == true;
-        }
-
-        private bool IsLiveShipController(IMyCubeBlock block)
-        {
-            if (block == null || !(block is IMyTerminalBlock) || block is IMyCryoChamber)
-                return false;
-
-            if ((block as IMyShipController)?.CanControlShip == true)
+            HashSet<HeatSink> gridSinks;
+            if (!heatSinks.TryGetValue(grid, out gridSinks))
             {
-                if ((block as IMyShipController).IsUnderControl)
-                    return true;
+                gridSinks = new HashSet<HeatSink> { heatSink };
+                heatSinks[grid] = gridSinks;
             }
-
-            return false;
+            else
+                gridSinks.Add(heatSink);
         }
 
-        private IMyShipController FindMainCockpit()
+        public int CountActiveSinks(out int activeSmallCount, bool apply = false)
         {
-            if (grids.Count == 0)
-                return null;
+            int activeCount = 0;
+            activeSmallCount = 0;
 
-            // Loop through all grids starting at largest until an in use one is found
-            foreach (MyCubeGrid grid in grids)
+            foreach (HashSet<HeatSink> gridSinks in heatSinks.Values)
             {
-                // Use the main cockpit if it exists
-                IMyTerminalBlock block = grid.MainCockpit;
-                if (block != null && IsLiveShipController(block))
-                    return (IMyShipController)block;
-
-                HashSet<IMyShipController> controlledgridCockpits = new HashSet<IMyShipController>();
-                if (cockpits.TryGetValue(grid, out controlledgridCockpits))
+                foreach (HeatSink heatSink in gridSinks)
                 {
-                    foreach (IMyShipController cockpit in controlledgridCockpits)
-                    {
-                        if (cockpit.IsUnderControl)
-                            return cockpit;
-                    }
+                    if (heatSink?.block == null || heatSink.block.MarkedForClose)
+                        continue;
+
+                    if (apply && HeatSink.heatEnabled && heatSink.exposureQueued)
+                        heatSink.ExposureCheck();
+
+                    bool active = HeatSink.heatEnabled && heatSink.block.IsFunctional && heatSink.block.Enabled && heatSink.isExposed;
+
+                    if (apply)
+                    heatSink.SetActive(active);
+
+                    if (!active)
+                        continue;
+
+                        activeCount++;
+
+                    if (heatSink.isSmall)
+                        activeSmallCount++;
                 }
             }
 
-            // No in use cockpit was found.
-            if (MainGrid == null)
-                return null;
-
-            HashSet<IMyShipController> gridCockpits;
-            if (cockpits.TryGetValue(MainGrid, out gridCockpits))
-                return gridCockpits.FirstElement();
-
-            return null;
+            return activeCount;
         }
 
-        public MatrixD FindWorldMatrix()
+        public MatrixD FindWorldMatrix(IMyShipController cockpit)
         {
-            if (grids.Count == 0 || MainGrid == null)
+            if (gridGroup.Count == 0 || mainGrid == null)
                 return Matrix.Zero;
 
-            IMyShipController cockpit = FindMainCockpit();
             if (cockpit != null)
             {
                 MatrixD result = cockpit.WorldMatrix;
-                result.Translation = MainGrid.WorldMatrix.Translation;
+                result.Translation = mainGrid.WorldMatrix.Translation;
                 return result;
             }
-            return MainGrid.WorldMatrix;
+            return mainGrid.WorldMatrix;
         }
 
-        public MatrixD FindBlockWorldMatrix(IMyCubeGrid Grid)
-        {
-            var MyGrid = Grid as MyCubeGrid;
-            IMyTerminalBlock block = MyGrid.MainCockpit;
-
-            // Use the main cockpit if it exists
-            if (block != null && block is IMyTerminalBlock && !(block is IMyCryoChamber))
-            {
-                if ((block as IMyShipController)?.CanControlShip == true)
-                {
-                    if ((block as IMyShipController).IsUnderControl)
-                    {
-                        IMyShipController maincockpit = (IMyShipController)block;
-                        MatrixD result = maincockpit.WorldMatrix;
-                        result.Translation = Grid.WorldMatrix.Translation;
-                        return result;
-                    }
-                }
-            }
-
-            HashSet<IMyShipController> controlledgridCockpits;
-            if (cockpits.TryGetValue(MyGrid, out controlledgridCockpits))
-            {
-                foreach (IMyShipController cockpit in controlledgridCockpits)
-                {
-                    if (cockpit.IsUnderControl)
-                    {
-                        MatrixD result = cockpit.WorldMatrix;
-                        result.Translation = Grid.WorldMatrix.Translation;
-                        return result;
-                    }
-                }
-            }
-
-            // No in use cockpit was found.
-            HashSet<IMyShipController> gridCockpits;
-            if (cockpits.TryGetValue(MyGrid, out gridCockpits))
-            {
-                MatrixD result = gridCockpits.FirstElement().WorldMatrix;
-                result.Translation = Grid.WorldMatrix.Translation;
-                return result;
-            }
-
-            return MyGrid.WorldMatrix;
-        }
-
-        #endregion
         public override bool Equals(object obj)
         {
             return Equals(obj as GridSystem);
@@ -367,31 +271,31 @@ namespace WarpDriveMod
 
         public bool Equals(GridSystem other)
         {
-            return other != null && Id == other.Id;
+            return other != null && id == other.id;
         }
 
         public override int GetHashCode()
         {
-            return 2108858624 + Id.GetHashCode();
+            return 2108858624 + id.GetHashCode();
         }
 
         public class BlockCounter
         {
-            public int Count { get; private set; }
+            public int count { get; private set; }
             public event Action<IMyCubeBlock> OnBlockAdded;
             public event Action<IMyCubeBlock> OnBlockRemoved;
             private readonly Func<IMyCubeBlock, bool> method;
 
-            public BlockCounter(Func<IMyCubeBlock, bool> method)
+            public BlockCounter(Func<IMyCubeBlock, bool> blockFilter)
             {
-                this.method = method;
+                method = blockFilter;
             }
 
             public void TryAddCount(IMyCubeBlock block)
             {
                 if (method.Invoke(block))
                 {
-                    Count++;
+                    count++;
                     OnBlockAdded?.Invoke(block);
                 }
             }
@@ -399,7 +303,7 @@ namespace WarpDriveMod
             {
                 if (method.Invoke(block))
                 {
-                    Count--;
+                    count--;
                     OnBlockRemoved?.Invoke(block);
                 }
             }
@@ -411,11 +315,11 @@ namespace WarpDriveMod
             }
         }
 
-        private class GridByCount : IComparer<MyCubeGrid>
+        private class GridByCount : IComparer<IMyCubeGrid>
         {
-            public int Compare(MyCubeGrid x, MyCubeGrid y)
+            public int Compare(IMyCubeGrid x, IMyCubeGrid y)
             {
-                int result1 = y.BlocksCount.CompareTo(x.BlocksCount);
+                int result1 = ((MyCubeGrid)y).BlocksCount.CompareTo(((MyCubeGrid)x).BlocksCount);
                 if (result1 == 0)
                     return x.EntityId.CompareTo(y.EntityId);
                 return result1;
