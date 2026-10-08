@@ -121,6 +121,20 @@ namespace WarpDriveMod
 
         private static readonly List<HyperspaceArrivalClaim> _activeClaims = new List<HyperspaceArrivalClaim>();
 
+        /// <summary>
+        /// Shared lock object for the active arrival claims list.
+        /// CapitalFSD and any future FSD types should lock on this when reading claims.
+        /// </summary>
+        public static readonly object _activeClaims_Lock = _activeClaims;
+
+        /// <summary>
+        /// Read-only view of the active arrival claims. Always lock on _activeClaims_Lock before iterating.
+        /// </summary>
+        public static IReadOnlyList<HyperspaceArrivalClaim> GetActiveClaims()
+        {
+            return _activeClaims;
+        }
+
         public static void RegisterClaim(long gridId, Vector3D dest, double radius, Vector3D dir, long fleetLeaderId = 0L)
         {
             lock (_activeClaims)

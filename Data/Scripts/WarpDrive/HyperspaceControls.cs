@@ -58,8 +58,8 @@ namespace WarpDriveMod
             var fleetJumpBtn = MyAPIGateway.TerminalControls.CreateControl<IMyTerminalControlButton, IMyUpgradeModule>("HyperspaceFleetJumpBtn");
             fleetJumpBtn.Title = MyStringId.GetOrCompute("Fleet Jump (Create / Join / Quit)");
             fleetJumpBtn.Tooltip = MyStringId.GetOrCompute("Creates a fleet jump lobby, joins a nearby friendly fleet jump, or manages/leaves formation.");
-            fleetJumpBtn.Enabled = IsHyperspaceDrive;
-            fleetJumpBtn.Visible = IsHyperspaceDrive;
+            fleetJumpBtn.Enabled = IsStandardHyperspaceDrive;
+            fleetJumpBtn.Visible = IsStandardHyperspaceDrive;
             fleetJumpBtn.SupportsMultipleBlocks = false;
             fleetJumpBtn.Action = OnFleetJumpButtonPressed;
             MyAPIGateway.TerminalControls.AddControl<IMyUpgradeModule>(fleetJumpBtn);
@@ -68,7 +68,7 @@ namespace WarpDriveMod
             var fleetJumpAction = MyAPIGateway.TerminalControls.CreateAction<IMyUpgradeModule>("HyperspaceFleetJumpAction");
             fleetJumpAction.Name = new StringBuilder("Fleet Jump (Create / Join / Quit)");
             fleetJumpAction.Icon = "Textures\\GUI\\Icons\\Actions\\Toggle.dds";
-            fleetJumpAction.Enabled = IsHyperspaceDrive;
+            fleetJumpAction.Enabled = IsStandardHyperspaceDrive;
             fleetJumpAction.Action = OnFleetJumpButtonPressed;
             fleetJumpAction.Writer = ActionFleetWriter;
             MyAPIGateway.TerminalControls.AddAction<IMyUpgradeModule>(fleetJumpAction);
@@ -80,11 +80,11 @@ namespace WarpDriveMod
             distanceSlider.Enabled = IsHyperspaceDrive;
             distanceSlider.Visible = IsHyperspaceDrive;
             distanceSlider.SetLimits(0.0f, 1.0f);
-            distanceSlider.Getter = (b) => GetHyperspace(b)?.JumpDistanceRatio ?? 1.0f;
+            distanceSlider.Getter = (b) => { var hs = GetHyperspace(b); return hs.IsValid ? hs.JumpDistanceRatio : 1.0f; };
             distanceSlider.Setter = (b, v) =>
             {
                 var hs = GetHyperspace(b);
-                if (hs != null)
+                if (hs.IsValid)
                 {
                     hs.JumpDistanceRatio = v;
                     hs.Mode = HyperspaceSystem.JumpMode.ManualDistance;
@@ -95,7 +95,7 @@ namespace WarpDriveMod
             distanceSlider.Writer = (b, sb) =>
             {
                 var hs = GetHyperspace(b);
-                if (hs == null) return;
+                if (!hs.IsValid) return;
                 float powerMW = hs.GetDrivePowerMW();
                 double currentKm = hs.GetCurrentManualDistance(powerMW) / 1000.0;
                 double maxKm = hs.GetMaxJumpDistance(powerMW) / 1000.0;
@@ -111,7 +111,7 @@ namespace WarpDriveMod
             incDistAction.Action = (b) =>
             {
                 var hs = GetHyperspace(b);
-                if (hs != null)
+                if (hs.IsValid)
                 {
                     hs.JumpDistanceRatio = MathHelper.Clamp(hs.JumpDistanceRatio + 0.05f, 0f, 1f);
                     hs.Mode = HyperspaceSystem.JumpMode.ManualDistance;
@@ -130,7 +130,7 @@ namespace WarpDriveMod
             decDistAction.Action = (b) =>
             {
                 var hs = GetHyperspace(b);
-                if (hs != null)
+                if (hs.IsValid)
                 {
                     hs.JumpDistanceRatio = MathHelper.Clamp(hs.JumpDistanceRatio - 0.05f, 0f, 1f);
                     hs.Mode = HyperspaceSystem.JumpMode.ManualDistance;
@@ -151,7 +151,7 @@ namespace WarpDriveMod
             clearGpsBtn.Action = (b) =>
             {
                 var hs = GetHyperspace(b);
-                if (hs == null) return;
+                if (!hs.IsValid) return;
                 hs.SelectedGpsCoords = null;
                 hs.SelectedGpsName = string.Empty;
                 hs.Mode = HyperspaceSystem.JumpMode.ManualDistance;
@@ -182,17 +182,17 @@ namespace WarpDriveMod
             var statusProp = MyAPIGateway.TerminalControls.CreateProperty<string, IMyUpgradeModule>("HyperspaceStatus");
             statusProp.Enabled = IsHyperspaceDrive;
             statusProp.Visible = IsHyperspaceDrive;
-            statusProp.Getter = (b) => GetHyperspace(b)?.State.ToString() ?? "Idle";
+            statusProp.Getter = (b) => { var hs = GetHyperspace(b); return hs.IsValid ? hs.StateString : "Idle"; };
             MyAPIGateway.TerminalControls.AddControl<IMyUpgradeModule>(statusProp);
 
             var distProp = MyAPIGateway.TerminalControls.CreateProperty<float, IMyUpgradeModule>("HyperspaceDistanceRatio");
             distProp.Enabled = IsHyperspaceDrive;
             distProp.Visible = IsHyperspaceDrive;
-            distProp.Getter = (b) => GetHyperspace(b)?.JumpDistanceRatio ?? 1.0f;
+            distProp.Getter = (b) => { var hs = GetHyperspace(b); return hs.IsValid ? hs.JumpDistanceRatio : 1.0f; };
             distProp.Setter = (b, v) =>
             {
                 var hs = GetHyperspace(b);
-                if (hs != null) hs.JumpDistanceRatio = MathHelper.Clamp(v, 0f, 1f);
+                if (hs.IsValid) hs.JumpDistanceRatio = MathHelper.Clamp(v, 0f, 1f);
             };
             MyAPIGateway.TerminalControls.AddControl<IMyUpgradeModule>(distProp);
         }
@@ -228,8 +228,8 @@ namespace WarpDriveMod
             var fleetJumpBtn = MyAPIGateway.TerminalControls.CreateControl<IMyTerminalControlButton, IMyRemoteControl>("HyperspaceFleetJumpBtn_RC");
             fleetJumpBtn.Title = MyStringId.GetOrCompute("Fleet Jump (Create / Join / Quit)");
             fleetJumpBtn.Tooltip = MyStringId.GetOrCompute("Creates a fleet jump lobby, joins a nearby friendly fleet jump, or manages/leaves formation.");
-            fleetJumpBtn.Enabled = IsHyperspaceGrid;
-            fleetJumpBtn.Visible = IsHyperspaceGrid;
+            fleetJumpBtn.Enabled = IsStandardHyperspaceGrid;
+            fleetJumpBtn.Visible = IsStandardHyperspaceGrid;
             fleetJumpBtn.SupportsMultipleBlocks = false;
             fleetJumpBtn.Action = OnFleetJumpButtonPressed;
             MyAPIGateway.TerminalControls.AddControl<IMyRemoteControl>(fleetJumpBtn);
@@ -238,7 +238,7 @@ namespace WarpDriveMod
             var fleetJumpAction = MyAPIGateway.TerminalControls.CreateAction<IMyRemoteControl>("HyperspaceFleetJumpAction_RC");
             fleetJumpAction.Name = new StringBuilder("Fleet Jump (Create / Join / Quit)");
             fleetJumpAction.Icon = "Textures\\GUI\\Icons\\Actions\\Toggle.dds";
-            fleetJumpAction.Enabled = IsHyperspaceGrid;
+            fleetJumpAction.Enabled = IsStandardHyperspaceGrid;
             fleetJumpAction.Action = OnFleetJumpButtonPressed;
             fleetJumpAction.Writer = ActionFleetWriter;
             MyAPIGateway.TerminalControls.AddAction<IMyRemoteControl>(fleetJumpAction);
@@ -250,11 +250,11 @@ namespace WarpDriveMod
             distanceSlider.Enabled = IsHyperspaceGrid;
             distanceSlider.Visible = IsHyperspaceGrid;
             distanceSlider.SetLimits(0.0f, 1.0f);
-            distanceSlider.Getter = (b) => GetHyperspace(b)?.JumpDistanceRatio ?? 1.0f;
+            distanceSlider.Getter = (b) => { var hs = GetHyperspace(b); return hs.IsValid ? hs.JumpDistanceRatio : 1.0f; };
             distanceSlider.Setter = (b, v) =>
             {
                 var hs = GetHyperspace(b);
-                if (hs != null)
+                if (hs.IsValid)
                 {
                     hs.JumpDistanceRatio = v;
                     hs.Mode = HyperspaceSystem.JumpMode.ManualDistance;
@@ -265,7 +265,7 @@ namespace WarpDriveMod
             distanceSlider.Writer = (b, sb) =>
             {
                 var hs = GetHyperspace(b);
-                if (hs == null)
+                if (!hs.IsValid)
                 {
                     sb.Append("No FSD");
                     return;
@@ -285,7 +285,7 @@ namespace WarpDriveMod
             incDistAction.Action = (b) =>
             {
                 var hs = GetHyperspace(b);
-                if (hs != null)
+                if (hs.IsValid)
                 {
                     hs.JumpDistanceRatio = MathHelper.Clamp(hs.JumpDistanceRatio + 0.05f, 0f, 1f);
                     hs.Mode = HyperspaceSystem.JumpMode.ManualDistance;
@@ -304,7 +304,7 @@ namespace WarpDriveMod
             decDistAction.Action = (b) =>
             {
                 var hs = GetHyperspace(b);
-                if (hs != null)
+                if (hs.IsValid)
                 {
                     hs.JumpDistanceRatio = MathHelper.Clamp(hs.JumpDistanceRatio - 0.05f, 0f, 1f);
                     hs.Mode = HyperspaceSystem.JumpMode.ManualDistance;
@@ -325,7 +325,7 @@ namespace WarpDriveMod
             clearGpsBtn.Action = (b) =>
             {
                 var hs = GetHyperspace(b);
-                if (hs == null) return;
+                if (!hs.IsValid) return;
                 hs.SelectedGpsCoords = null;
                 hs.SelectedGpsName = string.Empty;
                 hs.Mode = HyperspaceSystem.JumpMode.ManualDistance;
@@ -356,17 +356,17 @@ namespace WarpDriveMod
             var statusProp = MyAPIGateway.TerminalControls.CreateProperty<string, IMyRemoteControl>("HyperspaceStatus");
             statusProp.Enabled = IsHyperspaceGrid;
             statusProp.Visible = IsHyperspaceGrid;
-            statusProp.Getter = (b) => GetHyperspace(b)?.State.ToString() ?? "Idle";
+            statusProp.Getter = (b) => { var hs = GetHyperspace(b); return hs.IsValid ? hs.StateString : "Idle"; };
             MyAPIGateway.TerminalControls.AddControl<IMyRemoteControl>(statusProp);
 
             var distProp = MyAPIGateway.TerminalControls.CreateProperty<float, IMyRemoteControl>("HyperspaceDistanceRatio");
             distProp.Enabled = IsHyperspaceGrid;
             distProp.Visible = IsHyperspaceGrid;
-            distProp.Getter = (b) => GetHyperspace(b)?.JumpDistanceRatio ?? 1.0f;
+            distProp.Getter = (b) => { var hs = GetHyperspace(b); return hs.IsValid ? hs.JumpDistanceRatio : 1.0f; };
             distProp.Setter = (b, v) =>
             {
                 var hs = GetHyperspace(b);
-                if (hs != null) hs.JumpDistanceRatio = MathHelper.Clamp(v, 0f, 1f);
+                if (hs.IsValid) hs.JumpDistanceRatio = MathHelper.Clamp(v, 0f, 1f);
             };
             MyAPIGateway.TerminalControls.AddControl<IMyRemoteControl>(distProp);
         }
@@ -374,7 +374,7 @@ namespace WarpDriveMod
         private static void ActionJumpWriter(IMyTerminalBlock block, StringBuilder sb)
         {
             var hs = GetHyperspace(block);
-            if (hs == null)
+            if (!hs.IsValid)
             {
                 sb.Append("No FSD");
                 return;
@@ -390,29 +390,16 @@ namespace WarpDriveMod
                 return;
             }
 
-            switch (hs.State)
-            {
-                case HyperspaceSystem.HyperState.Idle:
-                    sb.Append("Jump");
-                    break;
-                case HyperspaceSystem.HyperState.Charging:
-                case HyperspaceSystem.HyperState.HoldingCharge:
-                case HyperspaceSystem.HyperState.Countdown:
-                    sb.Append("Abort");
-                    break;
-                case HyperspaceSystem.HyperState.Active:
-                    sb.Append("Active");
-                    break;
-                case HyperspaceSystem.HyperState.Cooldown:
-                    sb.Append("Cooling");
-                    break;
-            }
+            if (hs.IsIdle) { sb.Append("Jump"); }
+            else if (hs.IsCharging) { sb.Append("Abort"); }
+            else if (hs.IsActive) { sb.Append("Active"); }
+            else if (hs.IsCooling) { sb.Append("Cooling"); }
         }
 
         private static void ActionFleetWriter(IMyTerminalBlock block, StringBuilder sb)
         {
             var hs = GetHyperspace(block);
-            if (hs == null)
+            if (!hs.IsValid)
             {
                 sb.Append("No FSD");
                 return;
@@ -449,7 +436,7 @@ namespace WarpDriveMod
         private static void ActionDistWriter(IMyTerminalBlock block, StringBuilder sb)
         {
             var hs = GetHyperspace(block);
-            if (hs != null)
+            if (hs.IsValid)
                 sb.Append($"{(hs.JumpDistanceRatio * 100f):F0}%");
         }
 
@@ -502,6 +489,59 @@ namespace WarpDriveMod
             return null;
         }
 
+        public struct HyperspaceAdapter
+        {
+            public readonly HyperspaceSystem hs;
+            public readonly CapitalFSD cap;
+            public readonly WarpDrive drive;
+
+            public HyperspaceAdapter(WarpDrive d)
+            {
+                drive = d;
+                hs = d?.Hyperspace;
+                cap = d?.CapitalFSD;
+            }
+
+            public bool IsValid => (hs != null) || (cap != null);
+
+            public float JumpDistanceRatio
+            {
+                get { return (hs != null) ? hs.JumpDistanceRatio : (cap != null ? cap.JumpDistanceRatio : 1f); }
+                set { if (hs != null) hs.JumpDistanceRatio = value; else if (cap != null) cap.JumpDistanceRatio = value; }
+            }
+
+            public HyperspaceSystem.JumpMode Mode
+            {
+                get { return (hs != null) ? hs.Mode : (cap != null ? cap.Mode : HyperspaceSystem.JumpMode.ManualDistance); }
+                set { if (hs != null) hs.Mode = value; else if (cap != null) cap.Mode = value; }
+            }
+
+            public string SelectedGpsName
+            {
+                get { return (hs != null) ? hs.SelectedGpsName : (cap != null ? cap.SelectedGpsName : string.Empty); }
+                set { if (hs != null) hs.SelectedGpsName = value; else if (cap != null) cap.SelectedGpsName = value; }
+            }
+
+            public Vector3D? SelectedGpsCoords
+            {
+                get { return (hs != null) ? hs.SelectedGpsCoords : (cap != null ? cap.SelectedGpsCoords : null); }
+                set { if (hs != null) hs.SelectedGpsCoords = value; else if (cap != null) cap.SelectedGpsCoords = value; }
+            }
+
+            public string StateString => (hs != null) ? hs.State.ToString() : (cap != null ? cap.State.ToString() : "Idle");
+
+            public bool IsIdle => (hs != null) ? hs.State == HyperspaceSystem.HyperState.Idle : (cap != null ? cap.State == CapitalFSD.CapState.Idle : true);
+            public bool IsActive => (hs != null) ? hs.State == HyperspaceSystem.HyperState.Active : (cap != null ? cap.State == CapitalFSD.CapState.Transit : false);
+            public bool IsCooling => (hs != null) ? hs.State == HyperspaceSystem.HyperState.Cooldown : (cap != null ? cap.State == CapitalFSD.CapState.Cooldown : false);
+            public bool IsCharging => (hs != null) ? (hs.State == HyperspaceSystem.HyperState.Charging || hs.State == HyperspaceSystem.HyperState.HoldingCharge || hs.State == HyperspaceSystem.HyperState.Countdown) : (cap != null ? (cap.State == CapitalFSD.CapState.Charging || cap.State == CapitalFSD.CapState.HoldingCharge || cap.State == CapitalFSD.CapState.EngageRiser) : false);
+
+            public float GetDrivePowerMW() => (hs != null) ? hs.GetDrivePowerMW() : (cap != null ? (cap.HostDrive?.Settings?.baseRequiredPower ?? 100f) : 100f);
+
+            public double GetCurrentManualDistance(float power) => (hs != null) ? hs.GetCurrentManualDistance(power) : (cap != null ? cap.GetCurrentManualDistance(power) : 0);
+
+            public double GetMaxJumpDistance(float power) => (hs != null) ? hs.GetMaxJumpDistance(power) : (cap != null ? cap.GetMaxJumpDistance(power) : 0);
+        }
+
         private static bool IsWarpDrive(IMyTerminalBlock block)
         {
             return block?.GameLogic?.GetAs<WarpDrive>() != null;
@@ -510,24 +550,36 @@ namespace WarpDriveMod
         private static bool IsHyperspaceDrive(IMyTerminalBlock block)
         {
             var drive = block?.GameLogic?.GetAs<WarpDrive>();
-            return drive != null && drive.SupportsHyperspace;
+            return drive != null && (drive.SupportsHyperspace || drive.IsCapitalFSD);
         }
 
         private static bool IsHyperspaceGrid(IMyTerminalBlock block)
         {
             var drive = GetWarpDrive(block);
+            return drive != null && (drive.SupportsHyperspace || drive.IsCapitalFSD);
+        }
+
+        private static bool IsStandardHyperspaceDrive(IMyTerminalBlock block)
+        {
+            var drive = block?.GameLogic?.GetAs<WarpDrive>();
             return drive != null && drive.SupportsHyperspace;
         }
 
-        private static HyperspaceSystem GetHyperspace(IMyTerminalBlock block)
+        private static bool IsStandardHyperspaceGrid(IMyTerminalBlock block)
         {
-            return GetWarpDrive(block)?.Hyperspace;
+            var drive = GetWarpDrive(block);
+            return drive != null && drive.SupportsHyperspace;
+        }
+
+        private static HyperspaceAdapter GetHyperspace(IMyTerminalBlock block)
+        {
+            return new HyperspaceAdapter(GetWarpDrive(block));
         }
 
         private static string GetGpsProperty(IMyTerminalBlock block)
         {
             var hs = GetHyperspace(block);
-            if (hs == null || !hs.SelectedGpsCoords.HasValue) return string.Empty;
+            if (!hs.IsValid || !hs.SelectedGpsCoords.HasValue) return string.Empty;
             var c = hs.SelectedGpsCoords.Value;
             return $"GPS:{hs.SelectedGpsName}:{c.X:F2}:{c.Y:F2}:{c.Z:F2}:";
         }
@@ -535,7 +587,7 @@ namespace WarpDriveMod
         private static void SetGpsProperty(IMyTerminalBlock block, string gpsString)
         {
             var hs = GetHyperspace(block);
-            if (hs == null) return;
+            if (!hs.IsValid) return;
 
             if (string.IsNullOrWhiteSpace(gpsString))
             {
@@ -626,7 +678,7 @@ namespace WarpDriveMod
         private static void PopulateGpsList(IMyTerminalBlock block, List<MyTerminalControlListBoxItem> items, List<MyTerminalControlListBoxItem> selected)
         {
             var hs = GetHyperspace(block);
-            if (hs == null) return;
+            if (!hs.IsValid) return;
 
             var player = MyAPIGateway.Session?.Player;
             if (player == null) return;
@@ -654,7 +706,7 @@ namespace WarpDriveMod
         private static void OnGpsSelected(IMyTerminalBlock block, List<MyTerminalControlListBoxItem> selected)
         {
             var hs = GetHyperspace(block);
-            if (hs == null) return;
+            if (!hs.IsValid) return;
 
             if (selected != null && selected.Count > 0)
             {
@@ -681,7 +733,7 @@ namespace WarpDriveMod
                 return;
             }
 
-            if (!drive.SupportsHyperspace)
+            if (!drive.SupportsHyperspace && !drive.IsCapitalFSD)
             {
                 var p = MyAPIGateway.Session?.Player;
                 long pid = p?.IdentityId ?? 0L;
@@ -691,9 +743,9 @@ namespace WarpDriveMod
 
             var player = MyAPIGateway.Session?.Player;
             long playerId = player?.IdentityId ?? 0L;
-            var hs = drive.Hyperspace;
+            var hs = new HyperspaceAdapter(drive);
 
-            if (drive.System != null && drive.System.WarpState != WarpSystem.State.Idle && (hs == null || hs.State == HyperspaceSystem.HyperState.Idle))
+            if (drive.System != null && drive.System.WarpState != WarpSystem.State.Idle && (!hs.IsValid || hs.IsIdle))
             {
                 drive.System.SendMessage(drive.System.warnInUse, 3f, "Red", playerId);
                 return;
@@ -703,11 +755,11 @@ namespace WarpDriveMod
             {
                 EntityId = drive.Block.EntityId,
                 SendingPlayerID = playerId,
-                Mode = hs != null ? (int)hs.Mode : 0,
-                JumpDistanceRatio = hs != null ? hs.JumpDistanceRatio : 1.0f,
-                HasGpsCoords = hs != null && hs.SelectedGpsCoords.HasValue,
-                GpsCoords = (hs != null && hs.SelectedGpsCoords.HasValue) ? hs.SelectedGpsCoords.Value : Vector3D.Zero,
-                GpsName = hs?.SelectedGpsName ?? string.Empty
+                Mode = hs.IsValid ? (int)hs.Mode : 0,
+                JumpDistanceRatio = hs.IsValid ? hs.JumpDistanceRatio : 1.0f,
+                HasGpsCoords = hs.IsValid && hs.SelectedGpsCoords.HasValue,
+                GpsCoords = (hs.IsValid && hs.SelectedGpsCoords.HasValue) ? hs.SelectedGpsCoords.Value : Vector3D.Zero,
+                GpsName = hs.IsValid ? hs.SelectedGpsName : string.Empty
             };
 
             byte[] data = MyAPIGateway.Utilities.SerializeToBinary(msg);
@@ -718,6 +770,7 @@ namespace WarpDriveMod
                     MyAPIGateway.Multiplayer.SendMessageToOthers(WarpDriveSession.toggleHyperspacePacketId, data);
 
                 drive.Hyperspace?.TriggerJump(playerId);
+                drive.CapitalFSD?.TriggerJump(playerId);
             }
             else
             {

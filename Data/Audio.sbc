@@ -242,5 +242,95 @@
         </Wave>
       </Waves>
     </Sound>
+    <Sound>
+      <Id>
+        <TypeId>MyObjectBuilder_AudioDefinition</TypeId>
+        <SubtypeId>fsd_cap_charge</SubtypeId>
+      </Id>
+      <Category>SHIP</Category>
+      <Volume>1.2</Volume>
+      <MaxDistance>500</MaxDistance>
+      <Loopable>false</Loopable>
+      <Waves>
+        <Wave Type="D3">
+          <Start>Audio\SC\fsd_cap_charge.wav</Start>
+        </Wave>
+      </Waves>
+    </Sound>
+    <Sound>
+      <Id>
+        <TypeId>MyObjectBuilder_AudioDefinition</TypeId>
+        <SubtypeId>fsd_cap_engage</SubtypeId>
+      </Id>
+      <Category>SHIP</Category>
+      <Volume>1.2</Volume>
+      <MaxDistance>10000</MaxDistance>
+      <Loopable>false</Loopable>
+      <Waves>
+        <Wave Type="D3">
+          <Start>Audio\SC\fsd_cap_engage.wav</Start>
+        </Wave>
+      </Waves>
+    </Sound>
+    <Sound>
+      <Id>
+        <TypeId>MyObjectBuilder_AudioDefinition</TypeId>
+        <SubtypeId>fsd_cap_jump_in</SubtypeId>
+      </Id>
+      <Category>SHIP</Category>
+      <Volume>1.5</Volume>
+      <MaxDistance>30000</MaxDistance>
+      <Loopable>false</Loopable>
+      <Waves>
+        <Wave Type="D3">
+          <Start>Audio\SC\fsd_cap_jump_in.wav</Start>
+        </Wave>
+      </Waves>
+    </Sound>
+    <Sound>
+      <Id>
+        <TypeId>MyObjectBuilder_AudioDefinition</TypeId>
+        <SubtypeId>fsd_cap_incoming</SubtypeId>
+      </Id>
+      <Category>SHIP</Category>
+      <Volume>1.5</Volume>
+      <MaxDistance>10000</MaxDistance>
+      <Loopable>false</Loopable>
+      <Waves>
+        <Wave Type="D3">
+          <Start>Audio\SC\fsd_cap_incoming.wav</Start>
+        </Wave>
+      </Waves>
+    </Sound>
+    <Sound>
+      <Id>
+        <TypeId>MyObjectBuilder_AudioDefinition</TypeId>
+        <SubtypeId>fsd_cap_pre_jump</SubtypeId>
+      </Id>
+      <Category>SHIP</Category>
+      <Volume>1.5</Volume>
+      <MaxDistance>10000</MaxDistance>
+      <Loopable>false</Loopable>
+      <Waves>
+        <Wave Type="D3">
+          <Start>Audio\SC\fsd_cap_pre_jump.wav</Start>
+        </Wave>
+      </Waves>
+    </Sound>
+    <Sound>
+      <Id>
+        <TypeId>MyObjectBuilder_AudioDefinition</TypeId>
+        <SubtypeId>fsd_cap_jump_out</SubtypeId>
+      </Id>
+      <Category>SHIP</Category>
+      <Volume>1.5</Volume>
+      <MaxDistance>30000</MaxDistance>
+      <Loopable>false</Loopable>
+      <Waves>
+        <Wave Type="D3">
+          <Start>Audio\SC\fsd_cap_jump_out.wav</Start>
+        </Wave>
+      </Waves>
+    </Sound>
   </Sounds>
 </Definitions>

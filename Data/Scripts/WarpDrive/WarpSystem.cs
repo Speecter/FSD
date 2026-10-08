@@ -25,6 +25,7 @@ namespace WarpDriveMod
         public int Id { get; private set; }
         public State WarpState { get; set; }
         public HyperspaceSystem Hyperspace { get; private set; }
+        public CapitalFSD CapitalFSD { get; private set; }
         public static WarpSystem Instance;
         public event Action<WarpSystem> OnSystemInvalidatedAction;
         public List<IMyPlayer> OnlinePlayersList = new List<IMyPlayer>();
@@ -47,6 +48,7 @@ namespace WarpDriveMod
         private long startChargeRuntime = -1;
         private bool hasEnoughPower = true;
         private int functionalDrives;
+        public int FunctionalDrivesCount => functionalDrives;
         private IMyCubeGrid startWarpSource;
         private float totalHeat = 0;
         private int _updateTicks = 0;
@@ -61,7 +63,22 @@ namespace WarpDriveMod
         private bool TeleportNow = false;
         private bool WarpDropSound = false;
 
-        public bool IsPrototech = false;
+        public bool IsPrototech
+        {
+            get
+            {
+                if (warpDrives == null) return false;
+                foreach (var gridDrives in warpDrives.Values)
+                {
+                    foreach (var d in gridDrives)
+                    {
+                        if (d != null && d.IsPrototech)
+                            return true;
+                    }
+                }
+                return false;
+            }
+        }
 
         public string warnDestablalized = "FSD operation destabilized!";
         public string warnAborted = "Charging procedure aborted!";
@@ -79,8 +96,6 @@ namespace WarpDriveMod
 
         public WarpSystem(WarpDrive block, WarpSystem oldSystem)
         {
-            if (block != null && block.IsPrototech)
-                IsPrototech = true;
 
             if (block == null || block.Block == null || block.Block.CubeGrid == null)
                 return;
@@ -96,7 +111,10 @@ namespace WarpDriveMod
 
             grid.OnSystemInvalidated += OnSystemInvalidated;
 
-            Hyperspace = new HyperspaceSystem(block, grid);
+            if (block.IsCapitalFSD)
+                CapitalFSD = new CapitalFSD(block);
+            else
+                Hyperspace = new HyperspaceSystem(block, grid);
 
             if (!MyAPIGateway.Utilities.IsDedicated && grid.MainGrid != null)
             {
@@ -1057,6 +1075,12 @@ namespace WarpDriveMod
                         return;
                     }
 
+                    if (!block.IsFunctional || !block.IsWorking)
+                    {
+                        SendMessage(warnDamaged, 3f, "Red", PlayerID);
+                        return;
+                    }
+
                     if (!hasEnoughPower || !FindPlayerInCockpit())
                         return;
 
@@ -1825,6 +1849,7 @@ namespace WarpDriveMod
 
                                 case "PrototechFSDriveLarge":
                                 case "PrototechFSDriveLarge_S":
+                                case "PrototechFSDriveLarge_9S":
                                     totalPower = (WarpDrive.Instance.Settings.baseRequiredPower * 0.5f + percent) / WarpDrive.Instance.Settings.powerRequirementBySpeedDeviderLarge;
                                     break;
                                 default:
@@ -2202,6 +2227,11 @@ namespace WarpDriveMod
 
             gridDrives.Add(drive);
             warpDrives[block.CubeGrid] = gridDrives;
+
+            if (drive.IsCapitalFSD && CapitalFSD == null)
+                CapitalFSD = new CapitalFSD(drive);
+            else if (drive.SupportsHyperspace && Hyperspace == null)
+                Hyperspace = new HyperspaceSystem(drive, grid);
         }
 
         private void OnDriveRemoved(IMyCubeBlock block)

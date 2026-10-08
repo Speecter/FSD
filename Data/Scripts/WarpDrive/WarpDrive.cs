@@ -25,13 +25,14 @@ namespace WarpDriveMod
         "FSDriveLarge", "FSDriveLarge_A",
         "FSDriveSmall", "FSDriveSmall_A",
         "FSDriveLargeReskin", "FSDriveLargeReskin_A", "FSDriveLargerReskin", "FSDriveLargerReskin_A",
-        "PrototechFSDriveLarge", "PrototechFSDriveLarge_S",
+        "PrototechFSDriveLarge", "PrototechFSDriveLarge_S", "PrototechFSDriveLarge_9S",
         "PrototechFSDriveSmall", "PrototechFSDriveSmall_S")]
     public class WarpDrive : MyGameLogicComponent
     {
         public IMyFunctionalBlock Block { get; private set; }
         public WarpSystem System { get; private set; }
         public HyperspaceSystem Hyperspace => System?.Hyperspace;
+        public CapitalFSD CapitalFSD => System?.CapitalFSD;
         public Settings Settings { get; private set; }
         public static WarpDrive Instance;
         public bool HasPower => sink.CurrentInputByType(WarpConstants.ElectricityId) >= prevRequiredPower;
@@ -57,6 +58,18 @@ namespace WarpDriveMod
                 return sub.StartsWith("PrototechFSDrive");
             }
         }
+
+        public bool IsCapitalFSD
+        {
+            get
+            {
+                if (Block?.BlockDefinition == null) return false;
+                var sub = Block.BlockDefinition.SubtypeId;
+                return sub == "PrototechFSDriveLarge_9S";
+            }
+        }
+
+        public bool IsDuplicateFSD => System != null && System.FunctionalDrivesCount > 1;
 
         private T CastProhibit<T>(T ptr, object val) => (T)val;
 
@@ -211,6 +224,10 @@ namespace WarpDriveMod
                 {
                     Hyperspace.Close();
                 }
+                if (CapitalFSD != null)
+                {
+                    CapitalFSD.Close();
+                }
             }
             catch { }
 
@@ -269,6 +286,7 @@ namespace WarpDriveMod
 
                 case "PrototechFSDriveLarge":
                 case "PrototechFSDriveLarge_S":
+                case "PrototechFSDriveLarge_9S":
                     powerMultiplier = 0.5f;
                     powerSystem.Init(MyStringHash.GetOrCompute("Utility"),
                         (float)(Settings.baseRequiredPower * Settings.powerRequirementMultiplier * powerMultiplier),

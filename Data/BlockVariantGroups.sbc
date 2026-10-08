@@ -17,6 +17,7 @@
         <Block Type="MyObjectBuilder_UpgradeModule" Subtype="PrototechFSDriveSmall" />
         <Block Type="MyObjectBuilder_UpgradeModule" Subtype="PrototechFSDriveLarge_S" />
         <Block Type="MyObjectBuilder_UpgradeModule" Subtype="PrototechFSDriveSmall_S" />
+        <Block Type="MyObjectBuilder_UpgradeModule" Subtype="PrototechFSDriveLarge_9S" />
       </Blocks>
     </BlockVariantGroup>
 

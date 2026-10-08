@@ -109,6 +109,7 @@ namespace WarpDriveMod
         private readonly List<WarpDrive> requireSystem = new List<WarpDrive>();
         private readonly HashSet<HyperspaceSystem> hyperspaceSystems = new HashSet<HyperspaceSystem>();
         private readonly List<HyperspaceSystem> tempHyperspaceList = new List<HyperspaceSystem>();
+        private readonly List<CapitalFSD> tempCapitalFSDList = new List<CapitalFSD>();
         private bool isHost;
         private bool isPlayer;
         private bool _controlInit = false;
@@ -130,6 +131,63 @@ namespace WarpDriveMod
         {
             if (hs != null)
                 hyperspaceSystems.Remove(hs);
+        }
+
+        private readonly HashSet<CapitalFSD> capitalFSDSystems = new HashSet<CapitalFSD>();
+
+        public void RegisterCapitalFSD(CapitalFSD hs)
+        {
+            if (hs != null && !capitalFSDSystems.Contains(hs))
+                capitalFSDSystems.Add(hs);
+        }
+
+        public void UnregisterCapitalFSD(CapitalFSD hs)
+        {
+            if (hs != null)
+                capitalFSDSystems.Remove(hs);
+        }
+
+        public bool IsHyperspaceActiveForGrid(IMyCubeGrid grid)
+        {
+            if (grid == null) return false;
+            foreach (var hs in hyperspaceSystems)
+            {
+                if (hs.GridSystem?.MainGrid == grid && hs.State != HyperspaceSystem.HyperState.Idle)
+                    return true;
+            }
+            foreach (var hs in capitalFSDSystems)
+            {
+                if (hs.GridSystem?.MainGrid == grid && hs.State != CapitalFSD.CapState.Idle)
+                    return true;
+            }
+            return false;
+        }
+
+        public bool IsInHyperspaceOrTransit(IMyCubeGrid grid)
+        {
+            if (grid == null) return false;
+            foreach (var hs in hyperspaceSystems)
+            {
+                if (hs.GridSystem?.MainGrid == grid && hs.State == HyperspaceSystem.HyperState.Active)
+                    return true;
+            }
+            foreach (var hs in capitalFSDSystems)
+            {
+                if (hs.GridSystem?.MainGrid == grid && (hs.State == CapitalFSD.CapState.Transit || hs.State == CapitalFSD.CapState.JumpIn || hs.State == CapitalFSD.CapState.JumpOut))
+                    return true;
+            }
+            return false;
+        }
+
+        public bool IsSupercruiseActiveForGrid(IMyCubeGrid grid)
+        {
+            if (grid == null) return false;
+            foreach (var ws in warpSystems)
+            {
+                if (ws.grid?.MainGrid == grid && ws.WarpState != WarpSystem.State.Idle)
+                    return true;
+            }
+            return false;
         }
 
         public WarpDriveSession()
@@ -360,6 +418,28 @@ namespace WarpDriveMod
 
                     drive.Hyperspace.TriggerJump(message.SendingPlayerID);
                 }
+                else if (drive?.CapitalFSD != null)
+                {
+                    drive.CapitalFSD.Mode = (HyperspaceSystem.JumpMode)message.Mode;
+                    drive.CapitalFSD.JumpDistanceRatio = message.JumpDistanceRatio;
+                    if (message.HasGpsCoords)
+                    {
+                        drive.CapitalFSD.SelectedGpsCoords = message.GpsCoords;
+                        drive.CapitalFSD.SelectedGpsName = message.GpsName ?? string.Empty;
+                    }
+                    else
+                    {
+                        drive.CapitalFSD.SelectedGpsCoords = null;
+                        drive.CapitalFSD.SelectedGpsName = string.Empty;
+                    }
+
+                    if (MyAPIGateway.Multiplayer.IsServer || MyAPIGateway.Utilities.IsDedicated)
+                    {
+                        MyAPIGateway.Multiplayer.SendMessageToOthers(toggleHyperspacePacketId, data);
+                    }
+
+                    drive.CapitalFSD.TriggerJump(message.SendingPlayerID);
+                }
             }
         }
 
@@ -546,7 +626,8 @@ namespace WarpDriveMod
 
         private bool IsWarpDrive(IMyTerminalBlock block)
         {
-            return block?.GameLogic?.GetAs<WarpDrive>() != null;
+            var drive = block?.GameLogic?.GetAs<WarpDrive>();
+            return drive != null && !drive.IsCapitalFSD;
         }
 
         public override void Simulate()
@@ -600,6 +681,21 @@ namespace WarpDriveMod
                     }
                 }
                 tempHyperspaceList.Clear();
+            }
+
+            if (capitalFSDSystems.Count > 0)
+            {
+                tempCapitalFSDList.Clear();
+                tempCapitalFSDList.AddRange(capitalFSDSystems);
+                for (int i = 0; i < tempCapitalFSDList.Count; i++)
+                {
+                    var hs = tempCapitalFSDList[i];
+                    if (hs != null)
+                    {
+                        hs.Update();
+                    }
+                }
+                tempCapitalFSDList.Clear();
             }
         }
 
@@ -735,6 +831,10 @@ namespace WarpDriveMod
                 {
                     system.Hyperspace.DrawTargetReticle();
                 }
+                else if (system?.CapitalFSD != null)
+                {
+                    system.CapitalFSD.DrawTargetReticle();
+                }
                 else
                 {
                     foreach (var fat in grid.GetFatBlocks())
@@ -743,6 +843,11 @@ namespace WarpDriveMod
                         if (drive?.Hyperspace != null)
                         {
                             drive.Hyperspace.DrawTargetReticle();
+                            break;
+                        }
+                        else if (drive?.CapitalFSD != null)
+                        {
+                            drive.CapitalFSD.DrawTargetReticle();
                             break;
                         }
                     }
