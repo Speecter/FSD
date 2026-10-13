@@ -144,10 +144,11 @@
       <Category>SHIP</Category>
       <Volume>1.2</Volume>
       <MaxDistance>5000</MaxDistance>
-      <Loopable>false</Loopable>
+      <Loopable>true</Loopable>
       <Waves>
         <Wave Type="D3">
           <Start>Audio\SC\inHyperSpace.wav</Start>
+          <Loop>Audio\SC\inHyperSpace.wav</Loop>
         </Wave>
       </Waves>
     </Sound>
@@ -249,7 +250,7 @@
       </Id>
       <Category>SHIP</Category>
       <Volume>1.2</Volume>
-      <MaxDistance>500</MaxDistance>
+      <MaxDistance>1000</MaxDistance>
       <Loopable>false</Loopable>
       <Waves>
         <Wave Type="D3">

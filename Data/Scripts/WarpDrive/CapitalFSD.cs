@@ -272,9 +272,10 @@ namespace WarpDriveMod
             Vector3D checkPos = cockpit.WorldMatrix.Translation;
             float naturalGravityMultiplier;
             Vector3D naturalGravity = MyAPIGateway.Physics.CalculateNaturalGravityAt(checkPos, out naturalGravityMultiplier);
-            if (naturalGravity.Length() > 0.05f)
+            float allowInGravityMax = HostDrive?.Settings?.AllowInGravityMax ?? 0.2f;
+            if (naturalGravityMultiplier > allowInGravityMax)
             {
-                SendNotification("CANNOT ENGAGE FSD IN NATURAL GRAVITY WELL", 5f, "Red");
+                SendNotification($"CANNOT ENGAGE FSD IN GRAVITY > {allowInGravityMax:F2}g", 5f, "Red");
                 return;
             }
 
@@ -356,7 +357,7 @@ namespace WarpDriveMod
             // Planetary gravity well destination check (uses AllowInGravityMax setting like HyperspaceSystem)
             float dummyGravity;
             Vector3D destGravity = MyAPIGateway.Physics.CalculateNaturalGravityAt(JumpDestination, out dummyGravity);
-            float allowInGravityMax = HostDrive?.Settings?.AllowInGravityMax ?? 0.2f;
+            allowInGravityMax = HostDrive?.Settings?.AllowInGravityMax ?? 0.2f;
             if ((destGravity.Length() / WarpSystem.EARTH_GRAVITY) > allowInGravityMax)
             {
                 SendNotification("DESTINATION INSIDE PLANETARY GRAVITY WELL!", 5f, "Red");
@@ -703,7 +704,6 @@ namespace WarpDriveMod
             SpawnEntryWormholeFX(currentWipe.EntryWormholePos, forward, (float)crossRadius);
 
             // Play & broadcast jump-in audio
-            PlayLocalSound("fsd_cap_jump_in");
             BroadcastGlobalAudio(currentWipe.EntryWormholePos, "fsd_cap_jump_in", 30000f);
 
             ClearPhysicsVelocities();
@@ -868,11 +868,11 @@ namespace WarpDriveMod
             float elapsedSeconds = stateElapsedTicks / 60f;
             float totalSeconds = TransitDuration;
 
-            // Calculate smooth progress fraction and instantaneous velocity (0.5s departure accel & 0.5s arrival decel)
+            // Calculate smooth progress fraction and instantaneous velocity (0.5s departure accel & 0s arrival decel)
             float t;
             double speedMps;
-            // Delegate to HyperspaceSystem's authoritative static implementation (removes duplicate code)
-            HyperspaceSystem.CalculateTransitProgress(elapsedSeconds, totalSeconds, JumpDistance, out t, out speedMps);
+            // Delegate to HyperspaceSystem's authoritative static implementation (no arrival deceleration for Capital FSD)
+            HyperspaceSystem.CalculateTransitProgress(elapsedSeconds, totalSeconds, JumpDistance, out t, out speedMps, decelSeconds: 0.0);
 
             CurrentTransitSpeed = speedMps / 1000.0;
 
@@ -1048,7 +1048,6 @@ namespace WarpDriveMod
             SpawnExitWormholeFX(exitWormholePos, forward, (float)crossRadius);
 
             // Play & broadcast jump-out audio
-            PlayLocalSound("fsd_cap_jump_out");
             BroadcastGlobalAudio(exitWormholePos, "fsd_cap_jump_out", 30000f);
 
             ClearPhysicsVelocities();
@@ -1443,20 +1442,12 @@ namespace WarpDriveMod
 
             try
             {
-                if (block.FatBlock != null)
+                if (block.FatBlock != null && session != null)
                 {
-                    var fat = block.FatBlock;
-                    if (fat.Render != null)
-                    {
-                        fat.Render.Visible = false;
-                    }
-                    if (session != null)
-                        session.HiddenFatBlocks.Add(fat);
+                    session.HiddenFatBlocks.Add(block.FatBlock);
                 }
-                else
-                {
-                    block.Dithering = -1f;
-                }
+                
+                block.Dithering = -1f;
             }
             catch (Exception) { }
         }
@@ -1468,20 +1459,12 @@ namespace WarpDriveMod
 
             try
             {
-                if (block.FatBlock != null)
+                if (block.FatBlock != null && session != null)
                 {
-                    var fat = block.FatBlock;
-                    if (fat.Render != null)
-                    {
-                        fat.Render.Visible = true;
-                    }
-                    if (session != null)
-                        session.HiddenFatBlocks.Remove(fat);
+                    session.HiddenFatBlocks.Remove(block.FatBlock);
                 }
-                else
-                {
-                    block.Dithering = 0f;
-                }
+                
+                block.Dithering = 0f;
             }
             catch (Exception) { }
         }
@@ -2066,6 +2049,19 @@ namespace WarpDriveMod
         {
             if (MyAPIGateway.Utilities.IsDedicated || GridSystem?.MainGrid == null) return;
 
+            if (!IsLocalPlayerOnboard())
+            {
+                if (transitSound != null && transitSound.IsPlaying)
+                {
+                    transitSound.StopSound(true);
+                }
+                if (tunnelParticleFront != null && !tunnelParticleFront.IsStopped)
+                    tunnelParticleFront.Stop();
+                if (tunnelParticleRear != null && !tunnelParticleRear.IsStopped)
+                    tunnelParticleRear.Stop();
+                return;
+            }
+
             try
             {
                 var mainGrid = GridSystem.MainGrid;
@@ -2092,7 +2088,7 @@ namespace WarpDriveMod
                     tunnelParticleRear.WorldMatrix = rearDir;
                 }
 
-                if (transitSound != null && transitSound.IsPlaying)
+                if (transitSound != null)
                 {
                     Vector3D soundAnchor = (MyAPIGateway.Session?.Camera != null)
                         ? MyAPIGateway.Session.Camera.Position
@@ -2100,6 +2096,11 @@ namespace WarpDriveMod
 
                     transitSound.SetPosition(soundAnchor);
                     transitSound.SetVelocity(Vector3.Zero);
+
+                    if (!transitSound.IsPlaying)
+                    {
+                        transitSound.PlaySound(new MySoundPair("inHyperSpace"), true);
+                    }
                 }
             }
             catch (Exception) { }
@@ -2186,7 +2187,7 @@ namespace WarpDriveMod
                     if (dist <= maxDist * 1.5)
                     {
                         var soundPair = new MySoundPair(soundSubtype);
-                        MyEntity3DSoundEmitter emitter = new MyEntity3DSoundEmitter(MyAPIGateway.Session.Player?.Character as MyEntity);
+                        MyEntity3DSoundEmitter emitter = new MyEntity3DSoundEmitter(null);
                         emitter.SetPosition(pos);
                         emitter.PlaySound(soundPair);
                     }

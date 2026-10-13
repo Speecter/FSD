@@ -297,13 +297,13 @@ namespace WarpDriveMod
             switch (drive.System.WarpState)
             {
                 case WarpSystem.State.Idle:
-                    sb.Append("Cruise");
+                    sb.Append("Ready");
                     break;
                 case WarpSystem.State.Charging:
                     sb.Append("Charge");
                     break;
                 case WarpSystem.State.Active:
-                    sb.Append("Active");
+                    sb.Append("Cruise");
                     break;
             }
         }

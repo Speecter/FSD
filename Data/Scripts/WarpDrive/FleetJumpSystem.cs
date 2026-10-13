@@ -245,14 +245,6 @@ namespace WarpDriveMod
                 }
             }
 
-            // 2. Check if a friendly lobby is nearby (< 5km) -> Join it!
-            var nearbyLobby = GetNearestFriendlyLobby(mainGrid, playerId);
-            if (nearbyLobby != null)
-            {
-                JoinFleetJump(mainGrid, playerId);
-                return;
-            }
-
             // 3. Otherwise -> Create new lobby (become Leader)
             // 0. Supercruise conflict check
             if (drive.System != null && drive.System.WarpState != WarpSystem.State.Idle)
@@ -351,6 +343,42 @@ namespace WarpDriveMod
             }
         }
 
+        public static void InitiateFleetJoin(IMyTerminalBlock block, long playerId)
+        {
+            var drive = HyperspaceControls.GetWarpDrive(block);
+            if (drive == null || drive.Hyperspace == null)
+            {
+                MyAPIGateway.Utilities.ShowNotification("No Frame Shift Drive found on ship!", 3000, "Red");
+                return;
+            }
+
+            if (!drive.SupportsHyperspace)
+            {
+                MyAPIGateway.Utilities.ShowNotification("This FSD does not support Hyperspace jumps!", 3000, "Red");
+                return;
+            }
+
+            var hs = drive.Hyperspace;
+            var mainGrid = hs.GridSystem?.MainGrid;
+            if (mainGrid == null) return;
+
+            if (IsGridInFleet(mainGrid.EntityId))
+            {
+                MyAPIGateway.Utilities.ShowNotification("Already in a Fleet Jump formation.", 3000, "Red");
+                return;
+            }
+
+            var nearbyLobby = GetNearestFriendlyLobby(mainGrid, playerId);
+            if (nearbyLobby != null)
+            {
+                JoinFleetJump(mainGrid, playerId);
+            }
+            else
+            {
+                MyAPIGateway.Utilities.ShowNotification("No friendly Fleet Jump lobby found nearby.", 3000, "Red");
+            }
+        }
+
         // Calculates real-time alignment offset angle in degrees for any fleet member
         public static double GetMemberAlignmentOffset(long gridId, FleetJumpLobby lobby)
         {
@@ -381,12 +409,24 @@ namespace WarpDriveMod
             else
             {
                 var leaderGrid = MyEntities.GetEntityById(lobby.LeaderGridId) as MyCubeGrid;
+                Vector3D leaderDir = Vector3D.Zero;
                 if (leaderGrid != null && !leaderGrid.MarkedForClose)
                 {
                     lobby.DepartureOrientation = leaderGrid.WorldMatrix.GetOrientation();
                     lobby.DepartureOrigin = leaderGrid.PositionComp.GetPosition();
+                    
+                    foreach (var fat in leaderGrid.GetFatBlocks())
+                    {
+                        var drive = fat?.GameLogic?.GetAs<WarpDrive>();
+                        if (drive?.Hyperspace != null)
+                        {
+                            if (drive.Hyperspace.JumpDirection.LengthSquared() > 0.001)
+                                leaderDir = drive.Hyperspace.JumpDirection;
+                            break;
+                        }
+                    }
                 }
-                targetDir = lobby.DepartureOrientation.Forward;
+                targetDir = leaderDir.LengthSquared() > 0.001 ? leaderDir : lobby.DepartureOrientation.Forward;
             }
 
             double dot = MathHelper.Clamp(Vector3D.Dot(memberMatrix.Forward, targetDir), -1.0, 1.0);

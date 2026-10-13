@@ -56,8 +56,8 @@ namespace WarpDriveMod
 
             // Fleet Jump Button
             var fleetJumpBtn = MyAPIGateway.TerminalControls.CreateControl<IMyTerminalControlButton, IMyUpgradeModule>("HyperspaceFleetJumpBtn");
-            fleetJumpBtn.Title = MyStringId.GetOrCompute("Fleet Jump (Create / Join / Quit)");
-            fleetJumpBtn.Tooltip = MyStringId.GetOrCompute("Creates a fleet jump lobby, joins a nearby friendly fleet jump, or manages/leaves formation.");
+            fleetJumpBtn.Title = MyStringId.GetOrCompute("Fleet Jump (Create / Quit)");
+            fleetJumpBtn.Tooltip = MyStringId.GetOrCompute("Creates a fleet jump lobby or manages/leaves formation.");
             fleetJumpBtn.Enabled = IsStandardHyperspaceDrive;
             fleetJumpBtn.Visible = IsStandardHyperspaceDrive;
             fleetJumpBtn.SupportsMultipleBlocks = false;
@@ -66,12 +66,31 @@ namespace WarpDriveMod
 
             // Hotbar Action for Fleet Jump
             var fleetJumpAction = MyAPIGateway.TerminalControls.CreateAction<IMyUpgradeModule>("HyperspaceFleetJumpAction");
-            fleetJumpAction.Name = new StringBuilder("Fleet Jump (Create / Join / Quit)");
+            fleetJumpAction.Name = new StringBuilder("Fleet Jump (Create / Quit)");
             fleetJumpAction.Icon = "Textures\\GUI\\Icons\\Actions\\Toggle.dds";
             fleetJumpAction.Enabled = IsStandardHyperspaceDrive;
             fleetJumpAction.Action = OnFleetJumpButtonPressed;
             fleetJumpAction.Writer = ActionFleetWriter;
             MyAPIGateway.TerminalControls.AddAction<IMyUpgradeModule>(fleetJumpAction);
+
+            // Fleet Join Button
+            var fleetJoinBtn = MyAPIGateway.TerminalControls.CreateControl<IMyTerminalControlButton, IMyUpgradeModule>("HyperspaceFleetJoinBtn");
+            fleetJoinBtn.Title = MyStringId.GetOrCompute("Fleet Jump (Join)");
+            fleetJoinBtn.Tooltip = MyStringId.GetOrCompute("Joins a nearby friendly fleet jump.");
+            fleetJoinBtn.Enabled = IsStandardHyperspaceDrive;
+            fleetJoinBtn.Visible = IsStandardHyperspaceDrive;
+            fleetJoinBtn.SupportsMultipleBlocks = false;
+            fleetJoinBtn.Action = OnFleetJoinButtonPressed;
+            MyAPIGateway.TerminalControls.AddControl<IMyUpgradeModule>(fleetJoinBtn);
+
+            // Hotbar Action for Fleet Join
+            var fleetJoinAction = MyAPIGateway.TerminalControls.CreateAction<IMyUpgradeModule>("HyperspaceFleetJoinAction");
+            fleetJoinAction.Name = new StringBuilder("Fleet Jump (Join)");
+            fleetJoinAction.Icon = "Textures\\GUI\\Icons\\Actions\\Toggle.dds";
+            fleetJoinAction.Enabled = IsStandardHyperspaceDrive;
+            fleetJoinAction.Action = OnFleetJoinButtonPressed;
+            fleetJoinAction.Writer = ActionFleetJoinWriter;
+            MyAPIGateway.TerminalControls.AddAction<IMyUpgradeModule>(fleetJoinAction);
 
             // Manual Distance Slider
             var distanceSlider = MyAPIGateway.TerminalControls.CreateControl<IMyTerminalControlSlider, IMyUpgradeModule>("HyperspaceDistanceSlider");
@@ -421,6 +440,34 @@ namespace WarpDriveMod
                 return;
             }
 
+            sb.Append("Create");
+        }
+
+        private static void ActionFleetJoinWriter(IMyTerminalBlock block, StringBuilder sb)
+        {
+            var hs = GetHyperspace(block);
+            if (!hs.IsValid)
+            {
+                sb.Append("No FSD");
+                return;
+            }
+
+            var grid = block.CubeGrid;
+            if (grid == null)
+            {
+                sb.Append("Join");
+                return;
+            }
+
+            if (FleetJumpSystem.IsGridInFleet(grid.EntityId))
+            {
+                if (FleetJumpSystem.IsJumpLeader(grid.EntityId))
+                    sb.Append("Leader");
+                else
+                    sb.Append("In Fleet");
+                return;
+            }
+
             var player = MyAPIGateway.Session?.Player;
             long playerId = player?.IdentityId ?? 0L;
             if (FleetJumpSystem.GetNearestFriendlyLobby(grid, playerId) != null)
@@ -429,7 +476,7 @@ namespace WarpDriveMod
             }
             else
             {
-                sb.Append("Fleet");
+                sb.Append("---");
             }
         }
 
@@ -791,6 +838,20 @@ namespace WarpDriveMod
             var player = MyAPIGateway.Session?.Player;
             long playerId = player?.IdentityId ?? 0L;
             FleetJumpSystem.InitiateFleetJump(block, playerId);
+        }
+
+        private static void OnFleetJoinButtonPressed(IMyTerminalBlock block)
+        {
+            var drive = GetWarpDrive(block);
+            if (drive != null && !drive.SupportsHyperspace)
+            {
+                MyAPIGateway.Utilities.ShowNotification("This FSD does not support Hyperspace jumps! (Supercruise Only)", 3000, "Red");
+                return;
+            }
+
+            var player = MyAPIGateway.Session?.Player;
+            long playerId = player?.IdentityId ?? 0L;
+            FleetJumpSystem.InitiateFleetJoin(block, playerId);
         }
     }
 }

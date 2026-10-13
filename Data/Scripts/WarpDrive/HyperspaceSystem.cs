@@ -499,9 +499,9 @@ namespace WarpDriveMod
 
         /// <summary>
         /// Calculates smooth progress fraction [0.0 to 1.0] and current velocity in m/s
-        /// with 0.5s smooth ramp-up at departure and 0.5s smooth ramp-down before arrival.
+        /// with smooth ramp-up at departure and optional smooth ramp-down before arrival.
         /// </summary>
-        public static void CalculateTransitProgress(double elapsedSeconds, double totalSeconds, double totalDistance, out float progress, out double speedMps)
+        public static void CalculateTransitProgress(double elapsedSeconds, double totalSeconds, double totalDistance, out float progress, out double speedMps, double accelSeconds = TRANSIT_ACCEL_SECONDS, double decelSeconds = TRANSIT_DECEL_SECONDS)
         {
             if (totalSeconds <= 0.001 || totalDistance <= 0.0)
             {
@@ -510,22 +510,23 @@ namespace WarpDriveMod
                 return;
             }
 
-            double ta = Math.Min((double)TRANSIT_ACCEL_SECONDS, totalSeconds * 0.45);
-            double td = Math.Min((double)TRANSIT_DECEL_SECONDS, totalSeconds * 0.45);
+            double ta = Math.Min(accelSeconds, totalSeconds * 0.45);
+            double td = Math.Max(0.0, Math.Min(decelSeconds, totalSeconds * 0.45));
             double tEff = totalSeconds - (0.5 * (ta + td));
+            if (tEff <= 0.001) tEff = totalSeconds;
             double vCruise = totalDistance / tEff;
 
             double tau = MathHelper.Clamp(elapsedSeconds, 0.0, totalSeconds);
 
             if (tau <= ta && ta > 0.0001)
             {
-                // Departure acceleration phase (0.0 to 0.5s): smooth sinusoidal ramp up from 0 to vCruise
+                // Departure acceleration phase: smooth sinusoidal ramp up from 0 to vCruise
                 double phase = (Math.PI * tau) / ta;
                 double dist = 0.5 * (tau - (ta / Math.PI) * Math.Sin(phase)) * vCruise;
                 progress = MathHelper.Clamp((float)(dist / totalDistance), 0f, 1f);
                 speedMps = 0.5 * (1.0 - Math.Cos(phase)) * vCruise;
             }
-            else if (tau < (totalSeconds - td))
+            else if (td <= 0.0001 || tau < (totalSeconds - td))
             {
                 // Constant cruise phase
                 double dist = (0.5 * ta * vCruise) + ((tau - ta) * vCruise);
@@ -534,7 +535,7 @@ namespace WarpDriveMod
             }
             else
             {
-                // Arrival deceleration phase (last 0.5s before arrival): smooth sinusoidal ramp down from vCruise to 0
+                // Arrival deceleration phase: smooth sinusoidal ramp down from vCruise to 0
                 double tauPrime = tau - (totalSeconds - td);
                 double phase = (Math.PI * tauPrime) / td;
                 double distCruise = (0.5 * ta * vCruise) + ((totalSeconds - td - ta) * vCruise);
@@ -2188,7 +2189,7 @@ namespace WarpDriveMod
             double avgSpeedMps = JumpDistance / Math.Max(0.5, (double)JourneyDuration);
             _triggeredArrivalLeadFX = false;
 
-            if (!MyAPIGateway.Utilities.IsDedicated)
+            if (MyAPIGateway.Multiplayer.IsServer && !MyAPIGateway.Utilities.IsDedicated)
             {
                 SpawnJumpOriginFX(scale, (float)avgSpeedMps);
                 PlayJumpOriginSound(IsPrototechDrive ? WarpConstants.Hyperspace_jump : WarpConstants.Hyperspace_jump);
@@ -2384,6 +2385,11 @@ namespace WarpDriveMod
                         // Keep emitter glued to listener with zero velocity to eliminate Doppler cutoff
                         transitSound.SetPosition(soundAnchor);
                         transitSound.SetVelocity(Vector3.Zero);
+
+                        if (!transitSound.IsPlaying)
+                        {
+                            transitSound.PlaySound(WarpConstants.inHyperSpace, true);
+                        }
                     }
 
                     // Keep WarpTunnel active throughout the journey until we exit into real space
@@ -2422,7 +2428,7 @@ namespace WarpDriveMod
                     ? MathHelper.Clamp(gridWidth / 15f, 1.5f, 5.0f)
                     : MathHelper.Clamp(gridWidth / 8f, 0.8f, 2.5f);
 
-                if (!MyAPIGateway.Utilities.IsDedicated)
+                if (MyAPIGateway.Multiplayer.IsServer && !MyAPIGateway.Utilities.IsDedicated)
                 {
                     SpawnJumpArrivalLeadFX(JumpDestination, JumpDirection, scale, (float)avgTransitSpeedMps, IsPrototechDrive);
                 }
@@ -2502,7 +2508,7 @@ namespace WarpDriveMod
             _triggeredArrivalLeadFX = false;
             double avgSpeedExitMps = JumpDistance / Math.Max(0.5, (double)JourneyDuration);
 
-            if (!MyAPIGateway.Utilities.IsDedicated)
+            if (MyAPIGateway.Multiplayer.IsServer && !MyAPIGateway.Utilities.IsDedicated)
             {
                 SpawnJumpArrivalFX();
                 PlayJumpArrivalSound(IsPrototechDrive ? WarpConstants.PrototechJumpOutSound : WarpConstants.jumpOutSound);
