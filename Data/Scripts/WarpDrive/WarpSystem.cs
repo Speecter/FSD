@@ -4,6 +4,7 @@ using Sandbox.Game.Entities;
 using Sandbox.Game.Entities.Blocks;
 using Sandbox.Game.Entities.Character.Components;
 using Sandbox.Game.GameSystems;
+using Sandbox.Game.World;
 using Sandbox.ModAPI;
 using System;
 using System.Collections.Generic;
@@ -11,13 +12,14 @@ using System.Linq;
 using VRage.Game;
 using VRage.Game.Entity;
 using VRage.Game.ModAPI;
+using VRage.Game.ObjectBuilders.Components;
 using VRage.ModAPI;
 using VRage.Utils;
 using VRageMath;
 
 namespace WarpDriveMod
 {
-    public class WarpSystem
+    public class WarpSystem : IMyOxygenProvider
     {
         public bool valid => grid != null && grid.valid;
         public int id { get; private set; }
@@ -65,6 +67,7 @@ namespace WarpDriveMod
         public string warnIsStaticHUD = "Unable to move static grid!";
         public string warnOverheatHUD = "FS Drive overheated!";
         public string warnProximityHUD = "Can't Start FS Drive. Proximity Alert!";
+        public string warnCharacterHUD = "Can't Start FS Drive. Lifeform detected!";
         public string warnNotSeatedHUD = "Emergency Stop! Occupant not seated";
         public string warnDriveInUseHUD = "Another seat is piloting this grid";
         public string warnRestabilizingHUD = "FS Drive Restabilizing...";
@@ -163,28 +166,12 @@ namespace WarpDriveMod
                         sound.PlaySound(WarpSound.cruiseOperatingSound, true);
                 }
 
-                if (!MyAPIGateway.Utilities.IsDedicated)
-                {
-                    DrawCruiseLine(Color.CornflowerBlue, 1000, 180);
-
-                    if (currentSpeedPt < 316.6666)
-                        DrawCruiseLine(Color.Indigo, 800, 220);
-                }
-
                 if (InWarp() && currentSpeedPt > 1f)
                 {
                     gridMatrix.Translation += gridMatrix.Forward * currentSpeedPt;
 
                     if (MyAPIGateway.Multiplayer.IsServer)
                         mainGrid.Teleport(gridMatrix);
-
-                    if (!MyAPIGateway.Utilities.IsDedicated)
-                    {
-                        DrawCruiseLine(Color.SteelBlue, 1200, 240);
-
-                        if (currentSpeedPt > 316.6666)
-                            DrawCruiseLine(Color.LightGoldenrodYellow, 1500, 90);
-                    }
                 }
             }
 
@@ -206,13 +193,13 @@ namespace WarpDriveMod
                 GyroNerfer(true);
             }
 
+            PlayerO2Pause();
+
             if (!MyAPIGateway.Multiplayer.IsServer)
             {
                 ClientSpeedInput();
                 return true;
             }
-
-            PlayerO2Pause();
 
             if (IsInGravity())
             {
@@ -223,9 +210,10 @@ namespace WarpDriveMod
                 return false;
             }
 
-            if (WarpDrive.ProximityDanger(gridMatrix, mainGrid, currentSpeedPt))
+            IMyEntity obstacle = WarpDrive.ProximityDanger(gridMatrix, grid, currentSpeedPt);
+            if (obstacle != null)
             {
-                SendMessage(emergencyStopHUD);
+                SendMessage(obstacle is IMyCharacter ? warnCharacterHUD : emergencyStopHUD);
 
                 Dewarp(true);
                 primaryDrive?.IsRestabilizing();
@@ -276,6 +264,25 @@ namespace WarpDriveMod
                 BroadcastSpeed();
 
             return true;
+        }
+
+        public void Draw()
+        {
+            if (warpState != State.active)
+                return;
+
+            DrawCruiseLine(Color.CornflowerBlue, 1000, 180);
+
+            if (currentSpeedPt < 316.6666)
+                DrawCruiseLine(Color.Indigo, 800, 220);
+
+            if (currentSpeedPt <= 1f)
+                return;
+
+            DrawCruiseLine(Color.SteelBlue, 1200, 240);
+
+            if (currentSpeedPt > 316.6666)
+                DrawCruiseLine(Color.LightGoldenrodYellow, 1500, 90);
         }
 
         private void DrawCruiseLine(Vector4 color, double behind, double ahead)
@@ -329,7 +336,8 @@ namespace WarpDriveMod
                     return;
                 }
 
-                if (WarpDrive.ProximityDanger(grid.FindWorldMatrix(seat), drive.block.CubeGrid, 0, true))
+                if ((!Settings.instance.AllowInSafeZone && !MySessionComponentSafeZones.IsActionAllowed(grid.mainGrid.PositionComp.WorldAABB.Center, MySafeZoneAction.Damage))
+                    || WarpDrive.ProximityDanger(grid.FindWorldMatrix(seat), grid, 0, true) != null)
                 {
                     SendMessage(warnProximityHUD, 2f, "Red", player.IdentityId);
                     return;
@@ -409,6 +417,8 @@ namespace WarpDriveMod
             {
                 warpState = State.active;
                 gridMatrix = grid.FindWorldMatrix(controlSeat);
+                GyroNerfer(true);
+                GetOnboardPlayers();
                 
                 StopParticleEffect();
 
@@ -510,11 +520,14 @@ namespace WarpDriveMod
                         playersInWarpList.Add(onlinePlayer);
 
                         var oxygenComponent = onlinePlayer.Character.Components?.Get<MyCharacterOxygenComponent>();
-                        if (oxygenComponent != null)
+                        if (oxygenComponent != null && oxygenComponent.EnvironmentOxygenLevel >= MyCharacterOxygenComponent.LOW_OXYGEN_RATIO)
                             playerOxygenSnapshot[onlinePlayer.IdentityId] = oxygenComponent.SuitOxygenLevel;
                     }
                 }
             }
+
+            if (playerOxygenSnapshot.Count > 0)
+                MyAPIGateway.Session.OxygenProviderSystem.AddOxygenGenerator(this);
         }
 
         public bool IsPlayerSeated(long characterEntityId)
@@ -525,7 +538,7 @@ namespace WarpDriveMod
             foreach (var player in playersInWarpList)
             {
                 if (player?.Character != null && player.Character.EntityId == characterEntityId)
-                    return true;
+                    return playerOxygenSnapshot.ContainsKey(player.IdentityId);
             }
 
             return false;
@@ -546,6 +559,25 @@ namespace WarpDriveMod
                 if (oxygenComponent != null && oxygenComponent.SuitOxygenLevel != snapshot)
                     oxygenComponent.SuitOxygenLevel = snapshot;
             }
+        }
+
+        public float GetOxygenForPosition(Vector3D worldPoint)
+        {
+            return 1f;
+        }
+
+        public bool IsPositionInRange(Vector3D worldPoint)
+        {
+            if (warpState != State.active)
+                return false;
+
+            foreach (var player in playersInWarpList)
+            {
+                if (player?.Character != null && playerOxygenSnapshot.ContainsKey(player.IdentityId) && player.Character.WorldAABB.Contains(worldPoint) != ContainmentType.Disjoint)
+                    return true;
+            }
+
+            return false;
         }
 
         public static void PlayerO2DamagePause(object target, ref MyDamageInformation info, IReadOnlyList<WarpSystem> systems)
@@ -713,7 +745,7 @@ namespace WarpDriveMod
 
         private void GyroNerfer(bool cruising)
         {
-            if (!MyAPIGateway.Utilities.IsDedicated && !MyAPIGateway.Multiplayer.IsServer)
+            if (MyAPIGateway.Utilities.IsDedicated)
                 return;
 
             if (!cruising)
@@ -808,6 +840,7 @@ namespace WarpDriveMod
 
                 playersInWarpList.Clear();
                 playerOxygenSnapshot.Clear();
+            MyAPIGateway.Session?.OxygenProviderSystem?.RemoveOxygenGenerator(this);
 
             pilotId = 0;
             controlSeat = null;
@@ -1186,11 +1219,6 @@ namespace WarpDriveMod
 
             GyroNerfer(false);
 
-            if (!MyAPIGateway.Utilities.IsDedicated)
-            {
-                sound?.StopSound(true);
-                effect?.Stop();
-            }
             OnSystemInvalidatedAction?.Invoke(this);
             OnSystemInvalidatedAction = null;
         }
