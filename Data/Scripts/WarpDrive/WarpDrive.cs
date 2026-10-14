@@ -2,7 +2,6 @@ using Sandbox.Common.ObjectBuilders;
 using Sandbox.Game;
 using Sandbox.Game.Entities;
 using Sandbox.Game.EntityComponents;
-using Sandbox.Game.World;
 using Sandbox.ModAPI;
 using System;
 using System.Collections.Generic;
@@ -11,7 +10,6 @@ using VRage.Game;
 using VRage.Game.Components;
 using VRage.Game.Entity;
 using VRage.Game.ModAPI;
-using VRage.Game.ObjectBuilders.Components;
 using VRage.ModAPI;
 using VRage.ObjectBuilders;
 using VRage.Utils;
@@ -173,41 +171,68 @@ namespace WarpDriveMod
             return requiredPower;
         }
 
-        public static bool ProximityDanger(MatrixD gridMatrix, IMyCubeGrid warpGrid, double gridSpeed, bool spooling = false)
+        public static IMyEntity ProximityDanger(MatrixD gridMatrix, GridSystem gridSystem, double gridSpeed, bool spooling = false)
         {
-            if (warpGrid == null || (spooling && warpGrid.Physics == null))
-                return false;
+            IMyCubeGrid mainGrid = gridSystem?.mainGrid;
+            if (mainGrid == null || (spooling && mainGrid.Physics == null))
+                return null;
 
-            if (spooling && !Settings.instance.AllowInSafeZone && !MySessionComponentSafeZones.IsActionAllowed(warpGrid.WorldAABB.Center, MySafeZoneAction.Damage))
-                return true;
+            MatrixD toMainGrid = mainGrid.WorldMatrixNormalizedInv;
+            BoundingBoxD shipBox = BoundingBoxD.CreateInvalid();
+            foreach (IMyCubeGrid connectedGrid in gridSystem.gridGroup)
+            {
+                BoundingBox gridBox = connectedGrid.LocalAABB;
+                shipBox = BoundingBoxD.CreateMerged(shipBox, new BoundingBoxD(gridBox.Min, gridBox.Max).TransformFast(connectedGrid.WorldMatrix * toMainGrid));
+            }
 
+            Vector3D center = Vector3D.Transform(shipBox.Center, mainGrid.WorldMatrix);
             Vector3D forward = gridMatrix.Forward;
-            double pathLength = warpGrid.WorldAABB.HalfExtents.AbsMax() + 500.0;
 
-            LineD path = new LineD(warpGrid.WorldAABB.Center, warpGrid.WorldAABB.Center + forward * pathLength);
+            Vector3D shipSize = shipBox.Size;
+            double alongX = Math.Abs(Vector3D.Dot(mainGrid.WorldMatrix.Right, forward));
+            double alongY = Math.Abs(Vector3D.Dot(mainGrid.WorldMatrix.Up, forward));
+            double alongZ = Math.Abs(Vector3D.Dot(mainGrid.WorldMatrix.Forward, forward));
 
-            BoundingBox shipBox = warpGrid.LocalAABB;
-            double alongX = Vector3D.Dot(warpGrid.WorldMatrix.Right, forward);
-            double alongY = Vector3D.Dot(warpGrid.WorldMatrix.Up, forward);
-            double alongZ = Vector3D.Dot(warpGrid.WorldMatrix.Forward, forward);
-            double pathRadius = Math.Sqrt(shipBox.Width * shipBox.Width * (1 - alongX * alongX) + shipBox.Height * shipBox.Height * (1 - alongY * alongY) + shipBox.Depth * shipBox.Depth * (1 - alongZ * alongZ)) / 2;
+            double shipLength, pathRadius;
+            if (alongX >= alongY && alongX >= alongZ)
+            {
+                shipLength = shipSize.X;
+                pathRadius = Math.Max(shipSize.Y, shipSize.Z) / 2;
+            }
+            else if (alongY >= alongZ)
+            {
+                shipLength = shipSize.Y;
+                pathRadius = Math.Max(shipSize.X, shipSize.Z) / 2;
+            }
+            else
+            {
+                shipLength = shipSize.Z;
+                pathRadius = Math.Max(shipSize.X, shipSize.Y) / 2;
+            }
 
-            var sphere = new BoundingSphereD(warpGrid.WorldAABB.Center + forward * (pathLength / 2), pathLength / 2 + pathRadius);
+            LineD path = new LineD(center - forward * (shipLength / 2 - pathRadius), center + forward * (shipLength / 2 + 500.0));
+
+            var sphere = new BoundingSphereD((path.From + path.To) / 2, path.Length / 2 + pathRadius);
             List<IMyEntity> entList = MyAPIGateway.Entities.GetTopMostEntitiesInSphere(ref sphere);
 
             if (entList == null || entList.Count == 0)
-                return false;
+                return null;
 
             var attachedList = new List<IMyCubeGrid>();
 
             //gets subgrids and locked landing gear to ignore
-            MyAPIGateway.GridGroups.GetGroup(warpGrid, GridLinkTypeEnum.Physical, attachedList);
+            MyAPIGateway.GridGroups.GetGroup(mainGrid, GridLinkTypeEnum.Physical, attachedList);
 
             foreach (var ent in entList)
             {
-                if (!Settings.instance.AllowInSafeZone && ent is MySafeZone)
-                    return true;
-
+                var character = ent as IMyCharacter;
+                if (character != null)
+                {
+                    if (spooling || character.IsDead)
+                        continue;
+                }
+                else if (!(ent is MySafeZone) || Settings.instance.AllowInSafeZone)
+                {
                 if (!(ent is MyCubeGrid || ent is MyVoxelMap))
                     continue;
 
@@ -217,15 +242,18 @@ namespace WarpDriveMod
 
                 if (attachedList.Contains(ent as IMyCubeGrid))
                     continue;
+                }
 
-                BoundingBoxD obstacleBox = new BoundingBoxD(ent.WorldAABB.Min - new Vector3D(pathRadius), ent.WorldAABB.Max + new Vector3D(pathRadius));
+                MatrixD toLocal = ent.WorldMatrixNormalizedInv;
+                LineD localPath = new LineD(Vector3D.Transform(path.From, toLocal), Vector3D.Transform(path.To, toLocal));
+                BoundingBoxD obstacleBox = new BoundingBoxD(ent.LocalAABB.Min - new Vector3D(pathRadius), ent.LocalAABB.Max + new Vector3D(pathRadius));
                 double hitDistance;
 
-                if (obstacleBox.Intersects(ref path, out hitDistance))
-                    return true;
+                if (obstacleBox.Intersects(ref localPath, out hitDistance))
+                    return ent;
             }
 
-            return false;
+            return null;
         }
 
         public static bool EnemyProximityCharge(IMyCubeGrid warpGrid)
