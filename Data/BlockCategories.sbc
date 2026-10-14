@@ -18,6 +18,8 @@
         <string>UpgradeModule/PrototechFSDriveLarge</string>
         <string>UpgradeModule/PrototechFSDriveLarge_S</string>
         <string>UpgradeModule/PrototechFSDriveLarge_9S</string>
+        <string>UpgradeModule/HeatSinkLarge</string>
+        <string>UpgradeModule/HeatSinkVentLarge</string>
       </ItemIds>
     </Category>
 
@@ -34,6 +36,8 @@
         <string>UpgradeModule/FSDriveSmall_A</string>
         <string>UpgradeModule/PrototechFSDriveSmall</string>
         <string>UpgradeModule/PrototechFSDriveSmall_S</string>
+        <string>UpgradeModule/HeatSinkSmall</string>
+        <string>UpgradeModule/HeatSinkVentSmall</string>
       </ItemIds>
     </Category>
 

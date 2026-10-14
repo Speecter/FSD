@@ -500,18 +500,18 @@ namespace WarpDriveMod
             if (grid == null) return null;
 
             // Check WarpDriveSession active systems
-            if (WarpDriveSession.Instance != null)
+            if (WarpDriveSession.instance != null)
             {
-                var system = WarpDriveSession.Instance.GetWarpSystem(grid);
-                if (system?.Hyperspace?.HostDrive != null)
-                    return system.Hyperspace.HostDrive;
+                var system = WarpDriveSession.instance.GetGridWarpSystem(grid);
+                if (system?.hyperspace?.hostDrive != null)
+                    return system.hyperspace.hostDrive;
             }
 
             // Search local grid
             foreach (var fat in grid.GetFatBlocks())
             {
                 var drive = fat?.GameLogic?.GetAs<WarpDrive>();
-                if (drive != null && drive.Block != null && drive.Block.IsFunctional)
+                if (drive != null && drive.block != null && drive.block.IsFunctional)
                     return drive;
             }
 
@@ -527,7 +527,7 @@ namespace WarpDriveMod
                     foreach (var fat in mg.GetFatBlocks())
                     {
                         var drive = fat?.GameLogic?.GetAs<WarpDrive>();
-                        if (drive != null && drive.Block != null && drive.Block.IsFunctional)
+                        if (drive != null && drive.block != null && drive.block.IsFunctional)
                             return drive;
                     }
                 }
@@ -545,44 +545,44 @@ namespace WarpDriveMod
             public HyperspaceAdapter(WarpDrive d)
             {
                 drive = d;
-                hs = d?.Hyperspace;
-                cap = d?.CapitalFSD;
+                hs = d?.hyperspace;
+                cap = d?.capitalFSD;
             }
 
             public bool IsValid => (hs != null) || (cap != null);
 
             public float JumpDistanceRatio
             {
-                get { return (hs != null) ? hs.JumpDistanceRatio : (cap != null ? cap.JumpDistanceRatio : 1f); }
-                set { if (hs != null) hs.JumpDistanceRatio = value; else if (cap != null) cap.JumpDistanceRatio = value; }
+                get { return (hs != null) ? hs.jumpDistanceRatio : (cap != null ? cap.jumpDistanceRatio : 1f); }
+                set { if (hs != null) hs.jumpDistanceRatio = value; else if (cap != null) cap.jumpDistanceRatio = value; }
             }
 
             public HyperspaceSystem.JumpMode Mode
             {
-                get { return (hs != null) ? hs.Mode : (cap != null ? cap.Mode : HyperspaceSystem.JumpMode.ManualDistance); }
-                set { if (hs != null) hs.Mode = value; else if (cap != null) cap.Mode = value; }
+                get { return (hs != null) ? hs.mode : (cap != null ? cap.mode : HyperspaceSystem.JumpMode.ManualDistance); }
+                set { if (hs != null) hs.mode = value; else if (cap != null) cap.mode = value; }
             }
 
             public string SelectedGpsName
             {
-                get { return (hs != null) ? hs.SelectedGpsName : (cap != null ? cap.SelectedGpsName : string.Empty); }
-                set { if (hs != null) hs.SelectedGpsName = value; else if (cap != null) cap.SelectedGpsName = value; }
+                get { return (hs != null) ? hs.selectedGpsName : (cap != null ? cap.selectedGpsName : string.Empty); }
+                set { if (hs != null) hs.selectedGpsName = value; else if (cap != null) cap.selectedGpsName = value; }
             }
 
             public Vector3D? SelectedGpsCoords
             {
-                get { return (hs != null) ? hs.SelectedGpsCoords : (cap != null ? cap.SelectedGpsCoords : null); }
-                set { if (hs != null) hs.SelectedGpsCoords = value; else if (cap != null) cap.SelectedGpsCoords = value; }
+                get { return (hs != null) ? hs.selectedGpsCoords : (cap != null ? cap.selectedGpsCoords : null); }
+                set { if (hs != null) hs.selectedGpsCoords = value; else if (cap != null) cap.selectedGpsCoords = value; }
             }
 
-            public string StateString => (hs != null) ? hs.State.ToString() : (cap != null ? cap.State.ToString() : "Idle");
+            public string StateString => (hs != null) ? hs.state.ToString() : (cap != null ? cap.state.ToString() : "Idle");
 
-            public bool IsIdle => (hs != null) ? hs.State == HyperspaceSystem.HyperState.Idle : (cap != null ? cap.State == CapitalFSD.CapState.Idle : true);
-            public bool IsActive => (hs != null) ? hs.State == HyperspaceSystem.HyperState.Active : (cap != null ? cap.State == CapitalFSD.CapState.Transit : false);
-            public bool IsCooling => (hs != null) ? hs.State == HyperspaceSystem.HyperState.Cooldown : (cap != null ? cap.State == CapitalFSD.CapState.Cooldown : false);
-            public bool IsCharging => (hs != null) ? (hs.State == HyperspaceSystem.HyperState.Charging || hs.State == HyperspaceSystem.HyperState.HoldingCharge || hs.State == HyperspaceSystem.HyperState.Countdown) : (cap != null ? (cap.State == CapitalFSD.CapState.Charging || cap.State == CapitalFSD.CapState.HoldingCharge || cap.State == CapitalFSD.CapState.EngageRiser) : false);
+            public bool IsIdle => (hs != null) ? hs.state == HyperspaceSystem.HyperState.idle : (cap != null ? cap.state == CapitalFSD.CapState.idle : true);
+            public bool IsActive => (hs != null) ? hs.state == HyperspaceSystem.HyperState.active : (cap != null ? cap.state == CapitalFSD.CapState.transit : false);
+            public bool IsCooling => (hs != null) ? hs.state == HyperspaceSystem.HyperState.cooldown : (cap != null ? cap.state == CapitalFSD.CapState.cooldown : false);
+            public bool IsCharging => (hs != null) ? (hs.state == HyperspaceSystem.HyperState.charging || hs.state == HyperspaceSystem.HyperState.holdingCharge || hs.state == HyperspaceSystem.HyperState.countdown) : (cap != null ? (cap.state == CapitalFSD.CapState.charging || cap.state == CapitalFSD.CapState.holdingCharge || cap.state == CapitalFSD.CapState.engageRiser) : false);
 
-            public float GetDrivePowerMW() => (hs != null) ? hs.GetDrivePowerMW() : (cap != null ? (cap.HostDrive?.Settings?.baseRequiredPower ?? 100f) : 100f);
+            public float GetDrivePowerMW() => (hs != null) ? hs.GetDrivePowerMW() : (cap != null ? (cap.hostDrive != null ? Settings.instance.baseRequiredPower : 100f) : 100f);
 
             public double GetCurrentManualDistance(float power) => (hs != null) ? hs.GetCurrentManualDistance(power) : (cap != null ? cap.GetCurrentManualDistance(power) : 0);
 
@@ -597,25 +597,25 @@ namespace WarpDriveMod
         private static bool IsHyperspaceDrive(IMyTerminalBlock block)
         {
             var drive = block?.GameLogic?.GetAs<WarpDrive>();
-            return drive != null && (drive.SupportsHyperspace || drive.IsCapitalFSD);
+            return drive != null && (drive.supportsHyperspace || drive.isCapitalFSD);
         }
 
         private static bool IsHyperspaceGrid(IMyTerminalBlock block)
         {
             var drive = GetWarpDrive(block);
-            return drive != null && (drive.SupportsHyperspace || drive.IsCapitalFSD);
+            return drive != null && (drive.supportsHyperspace || drive.isCapitalFSD);
         }
 
         private static bool IsStandardHyperspaceDrive(IMyTerminalBlock block)
         {
             var drive = block?.GameLogic?.GetAs<WarpDrive>();
-            return drive != null && drive.SupportsHyperspace;
+            return drive != null && drive.supportsHyperspace;
         }
 
         private static bool IsStandardHyperspaceGrid(IMyTerminalBlock block)
         {
             var drive = GetWarpDrive(block);
-            return drive != null && drive.SupportsHyperspace;
+            return drive != null && drive.supportsHyperspace;
         }
 
         private static HyperspaceAdapter GetHyperspace(IMyTerminalBlock block)
@@ -780,7 +780,7 @@ namespace WarpDriveMod
                 return;
             }
 
-            if (!drive.SupportsHyperspace && !drive.IsCapitalFSD)
+            if (!drive.supportsHyperspace && !drive.isCapitalFSD)
             {
                 var p = MyAPIGateway.Session?.Player;
                 long pid = p?.IdentityId ?? 0L;
@@ -792,21 +792,21 @@ namespace WarpDriveMod
             long playerId = player?.IdentityId ?? 0L;
             var hs = new HyperspaceAdapter(drive);
 
-            if (drive.System != null && drive.System.WarpState != WarpSystem.State.Idle && (!hs.IsValid || hs.IsIdle))
+            if (drive.warpSystem != null && drive.warpSystem.warpState != WarpSystem.State.idle && (!hs.IsValid || hs.IsIdle))
             {
-                drive.System.SendMessage(drive.System.warnInUse, 3f, "Red", playerId);
+                drive.warpSystem.SendMessage("Another seat is piloting this grid", 3f, "Red", playerId);
                 return;
             }
 
             var msg = new HyperspaceMessage
             {
-                EntityId = drive.Block.EntityId,
-                SendingPlayerID = playerId,
-                Mode = hs.IsValid ? (int)hs.Mode : 0,
-                JumpDistanceRatio = hs.IsValid ? hs.JumpDistanceRatio : 1.0f,
-                HasGpsCoords = hs.IsValid && hs.SelectedGpsCoords.HasValue,
-                GpsCoords = (hs.IsValid && hs.SelectedGpsCoords.HasValue) ? hs.SelectedGpsCoords.Value : Vector3D.Zero,
-                GpsName = hs.IsValid ? hs.SelectedGpsName : string.Empty
+                entityId = drive.block.EntityId,
+                sendingPlayerID = playerId,
+                mode = hs.IsValid ? (int)hs.Mode : 0,
+                jumpDistanceRatio = hs.IsValid ? hs.JumpDistanceRatio : 1.0f,
+                hasGpsCoords = hs.IsValid && hs.SelectedGpsCoords.HasValue,
+                gpsCoords = (hs.IsValid && hs.SelectedGpsCoords.HasValue) ? hs.SelectedGpsCoords.Value : Vector3D.Zero,
+                gpsName = hs.IsValid ? hs.SelectedGpsName : string.Empty
             };
 
             byte[] data = MyAPIGateway.Utilities.SerializeToBinary(msg);
@@ -814,22 +814,22 @@ namespace WarpDriveMod
             if (MyAPIGateway.Multiplayer.IsServer)
             {
                 if (!MyAPIGateway.Utilities.IsDedicated)
-                    MyAPIGateway.Multiplayer.SendMessageToOthers(WarpDriveSession.toggleHyperspacePacketId, data);
+                    MyAPIGateway.Multiplayer.SendMessageToOthers(WarpDriveSession.hyperspaceTogglePacket, data);
 
-                drive.Hyperspace?.TriggerJump(playerId);
-                drive.CapitalFSD?.TriggerJump(playerId);
+                drive.hyperspace?.TriggerJump(playerId);
+                drive.capitalFSD?.TriggerJump(playerId);
             }
             else
             {
                 // Send packet to host to initiate/abort jump
-                MyAPIGateway.Multiplayer.SendMessageToServer(WarpDriveSession.toggleHyperspacePacketId, data);
+                MyAPIGateway.Multiplayer.SendMessageToServer(WarpDriveSession.hyperspaceTogglePacket, data);
             }
         }
 
         private static void OnFleetJumpButtonPressed(IMyTerminalBlock block)
         {
             var drive = GetWarpDrive(block);
-            if (drive != null && !drive.SupportsHyperspace)
+            if (drive != null && !drive.supportsHyperspace)
             {
                 MyAPIGateway.Utilities.ShowNotification("This FSD does not support Hyperspace jumps! (Supercruise Only)", 3000, "Red");
                 return;
@@ -843,7 +843,7 @@ namespace WarpDriveMod
         private static void OnFleetJoinButtonPressed(IMyTerminalBlock block)
         {
             var drive = GetWarpDrive(block);
-            if (drive != null && !drive.SupportsHyperspace)
+            if (drive != null && !drive.supportsHyperspace)
             {
                 MyAPIGateway.Utilities.ShowNotification("This FSD does not support Hyperspace jumps! (Supercruise Only)", 3000, "Red");
                 return;

@@ -202,20 +202,20 @@ namespace WarpDriveMod
         public static void InitiateFleetJump(IMyTerminalBlock block, long playerId)
         {
             var drive = HyperspaceControls.GetWarpDrive(block);
-            if (drive == null || drive.Hyperspace == null)
+            if (drive == null || drive.hyperspace == null)
             {
                 MyAPIGateway.Utilities.ShowNotification("No Frame Shift Drive found on ship!", 3000, "Red");
                 return;
             }
 
-            if (!drive.SupportsHyperspace)
+            if (!drive.supportsHyperspace)
             {
                 MyAPIGateway.Utilities.ShowNotification("This FSD does not support Hyperspace jumps! (Supercruise Only)", 3000, "Red");
                 return;
             }
 
-            var hs = drive.Hyperspace;
-            var mainGrid = hs.GridSystem?.MainGrid;
+            var hs = drive.hyperspace;
+            var mainGrid = hs?.gridSystem?.mainGrid;
             if (mainGrid == null) return;
 
             // 1. If already in fleet:
@@ -247,9 +247,9 @@ namespace WarpDriveMod
 
             // 3. Otherwise -> Create new lobby (become Leader)
             // 0. Supercruise conflict check
-            if (drive.System != null && drive.System.WarpState != WarpSystem.State.Idle)
+            if (drive.warpSystem != null && drive.warpSystem.warpState != WarpSystem.State.idle)
             {
-                drive.System.SendMessage(drive.System.warnInUse, 3f, "Red", playerId);
+                drive.warpSystem.SendMessage("Another seat is piloting this grid", 3f, "Red", playerId);
                 return;
             }
 
@@ -346,20 +346,20 @@ namespace WarpDriveMod
         public static void InitiateFleetJoin(IMyTerminalBlock block, long playerId)
         {
             var drive = HyperspaceControls.GetWarpDrive(block);
-            if (drive == null || drive.Hyperspace == null)
+            if (drive == null || drive.hyperspace == null)
             {
                 MyAPIGateway.Utilities.ShowNotification("No Frame Shift Drive found on ship!", 3000, "Red");
                 return;
             }
 
-            if (!drive.SupportsHyperspace)
+            if (!drive.supportsHyperspace)
             {
                 MyAPIGateway.Utilities.ShowNotification("This FSD does not support Hyperspace jumps!", 3000, "Red");
                 return;
             }
 
-            var hs = drive.Hyperspace;
-            var mainGrid = hs.GridSystem?.MainGrid;
+            var hs = drive.hyperspace;
+            var mainGrid = hs?.gridSystem?.mainGrid;
             if (mainGrid == null) return;
 
             if (IsGridInFleet(mainGrid.EntityId))
@@ -418,10 +418,10 @@ namespace WarpDriveMod
                     foreach (var fat in leaderGrid.GetFatBlocks())
                     {
                         var drive = fat?.GameLogic?.GetAs<WarpDrive>();
-                        if (drive?.Hyperspace != null)
+                        if (drive?.hyperspace != null)
                         {
-                            if (drive.Hyperspace.JumpDirection.LengthSquared() > 0.001)
-                                leaderDir = drive.Hyperspace.JumpDirection;
+                            if (drive.hyperspace.JumpDirection.LengthSquared() > 0.001)
+                                leaderDir = drive.hyperspace.JumpDirection;
                             break;
                         }
                     }
@@ -455,15 +455,15 @@ namespace WarpDriveMod
                 foreach (var fat in grid.GetFatBlocks())
                 {
                     drive = fat?.GameLogic?.GetAs<WarpDrive>();
-                    if (drive != null && drive.Block != null && drive.Block.IsFunctional && drive.SupportsHyperspace)
+                    if (drive != null && drive.block != null && drive.block.IsFunctional && drive.supportsHyperspace)
                         break;
                     drive = null;
                 }
 
-                if (drive != null && drive.Hyperspace != null)
+                if (drive != null && drive.hyperspace != null)
                 {
                     // If ship is on FSD cooldown, don't invite or auto-join until cooled down
-                    if (drive.Hyperspace.State == HyperspaceSystem.HyperState.Cooldown)
+                    if (drive.hyperspace.State == HyperspaceSystem.HyperState.Cooldown)
                         continue;
 
                     // Check if grid has a seated pilot or an unmanned working remote control
@@ -533,9 +533,9 @@ namespace WarpDriveMod
                     foreach (var fat in memberGrid.GetFatBlocks())
                     {
                         var drive = fat?.GameLogic?.GetAs<WarpDrive>();
-                        if (drive?.Hyperspace != null)
+                        if (drive?.hyperspace != null)
                         {
-                            memberHs = drive.Hyperspace;
+                            memberHs = drive.hyperspace;
                             break;
                         }
                     }
@@ -582,7 +582,7 @@ namespace WarpDriveMod
                                 foreach (var fat in mGrid.GetFatBlocks())
                                 {
                                     var drive = fat?.GameLogic?.GetAs<WarpDrive>();
-                                    if (drive?.Hyperspace != null && drive.Hyperspace.State == HyperspaceSystem.HyperState.Cooldown)
+                                    if (drive?.hyperspace != null && drive.hyperspace.State == HyperspaceSystem.HyperState.Cooldown)
                                     {
                                         MyAPIGateway.Utilities.ShowNotification($"Cannot jump: {m.GridName}'s FSD is still cooling down!", 4000, "Red");
                                         return;
@@ -658,19 +658,19 @@ namespace WarpDriveMod
                 }
             }
 
-            if (warpDrive == null || warpDrive.Hyperspace == null)
+            if (warpDrive == null || warpDrive.hyperspace == null)
             {
                 MyAPIGateway.Utilities.ShowNotification("No Frame Shift Drive on ship!", 3000, "Red");
                 return;
             }
 
-            if (!warpDrive.SupportsHyperspace)
+            if (!warpDrive.supportsHyperspace)
             {
                 MyAPIGateway.Utilities.ShowNotification("Your FSD does not support Hyperspace jumps! (Supercruise Only)", 3000, "Red");
                 return;
             }
 
-            var hs = warpDrive.Hyperspace;
+            var hs = warpDrive.hyperspace;
 
             if (hs.State == HyperspaceSystem.HyperState.Cooldown)
             {
@@ -758,9 +758,9 @@ namespace WarpDriveMod
                         foreach (var fat in grid.GetFatBlocks())
                         {
                             var drive = fat?.GameLogic?.GetAs<WarpDrive>();
-                            if (drive?.Hyperspace != null && drive.Hyperspace.IsFleetHolding)
+                            if (drive?.hyperspace != null && drive.hyperspace.IsFleetHolding)
                             {
-                                drive.Hyperspace.AbortJump("FLEET JUMP DISBANDED BY LEADER");
+                                drive.hyperspace.AbortJump("FLEET JUMP DISBANDED BY LEADER");
                             }
                         }
                     }
@@ -786,9 +786,9 @@ namespace WarpDriveMod
                     foreach (var fat in grid.GetFatBlocks())
                     {
                         var drive = fat?.GameLogic?.GetAs<WarpDrive>();
-                        if (drive?.Hyperspace != null && drive.Hyperspace.IsFleetHolding)
+                        if (drive?.hyperspace != null && drive.hyperspace.IsFleetHolding)
                         {
-                            drive.Hyperspace.AbortJump("LEFT FLEET JUMP");
+                            drive.hyperspace.AbortJump("LEFT FLEET JUMP");
                         }
                     }
                 }
@@ -817,9 +817,9 @@ namespace WarpDriveMod
             foreach (var fat in leaderGrid.GetFatBlocks())
             {
                 var drive = fat?.GameLogic?.GetAs<WarpDrive>();
-                if (drive?.Hyperspace != null)
+                if (drive?.hyperspace != null)
                 {
-                    leaderHs = drive.Hyperspace;
+                    leaderHs = drive.hyperspace;
                     break;
                 }
             }
@@ -841,7 +841,7 @@ namespace WarpDriveMod
                     foreach (var fat in mGrid.GetFatBlocks())
                     {
                         var drive = fat?.GameLogic?.GetAs<WarpDrive>();
-                        if (drive?.Hyperspace != null && drive.Hyperspace.State == HyperspaceSystem.HyperState.Cooldown)
+                        if (drive?.hyperspace != null && drive.hyperspace.State == HyperspaceSystem.HyperState.Cooldown)
                         {
                             MyAPIGateway.Utilities.ShowNotification($"Cannot jump: {m.GridName}'s FSD is still cooling down!", 4000, "Red");
                             return;
@@ -888,9 +888,9 @@ namespace WarpDriveMod
                 foreach (var fat in leaderGrid.GetFatBlocks())
                 {
                     var drive = fat?.GameLogic?.GetAs<WarpDrive>();
-                    if (drive?.Hyperspace != null)
+                    if (drive?.hyperspace != null)
                     {
-                        leaderHs = drive.Hyperspace;
+                        leaderHs = drive.hyperspace;
                         break;
                     }
                 }
@@ -937,9 +937,9 @@ namespace WarpDriveMod
                     foreach (var fat in memberGrid.GetFatBlocks())
                     {
                         var drive = fat?.GameLogic?.GetAs<WarpDrive>();
-                        if (drive?.Hyperspace != null)
+                        if (drive?.hyperspace != null)
                         {
-                            drive.Hyperspace.AbortJump("FLEET JUMP ABORTED - EXCEEDED 5km SECTOR LIMIT");
+                            drive.hyperspace.AbortJump("FLEET JUMP ABORTED - EXCEEDED 5km SECTOR LIMIT");
                             break;
                         }
                     }
@@ -953,9 +953,9 @@ namespace WarpDriveMod
                 foreach (var fat in memberGrid.GetFatBlocks())
                 {
                     var drive = fat?.GameLogic?.GetAs<WarpDrive>();
-                    if (drive?.Hyperspace != null)
+                    if (drive?.hyperspace != null)
                     {
-                        var memberHs = drive.Hyperspace;
+                        var memberHs = drive.hyperspace;
                         float mPower = memberHs.GetDrivePowerMW();
                         double mMaxDist = memberHs.GetMaxJumpDistance(mPower);
 
@@ -1065,9 +1065,9 @@ namespace WarpDriveMod
                             foreach (var fat in leaderGrid.GetFatBlocks())
                             {
                                 var drive = fat?.GameLogic?.GetAs<WarpDrive>();
-                                if (drive?.Hyperspace != null)
+                                if (drive?.hyperspace != null)
                                 {
-                                    var hs = drive.Hyperspace;
+                                    var hs = drive.hyperspace;
                                     hs.FleetLeaderGridId = msg.LeaderGridId;
                                     hs.Mode = lobby.Mode;
                                     hs.JumpDistanceRatio = lobby.JumpDistanceRatio;
@@ -1082,7 +1082,7 @@ namespace WarpDriveMod
                     if (MyAPIGateway.Multiplayer.IsServer)
                     {
                         byte[] data = MyAPIGateway.Utilities.SerializeToBinary(msg);
-                        MyAPIGateway.Multiplayer.SendMessageToOthers(WarpDriveSession.fleetJumpPacketId, data);
+                        MyAPIGateway.Multiplayer.SendMessageToOthers(WarpDriveSession.fleetJumpPacket, data);
                     }
                     break;
 
@@ -1117,9 +1117,9 @@ namespace WarpDriveMod
                                 foreach (var fat in memberGrid.GetFatBlocks())
                                 {
                                     var drive = fat?.GameLogic?.GetAs<WarpDrive>();
-                                    if (drive?.Hyperspace != null)
+                                    if (drive?.hyperspace != null)
                                     {
-                                        var hs = drive.Hyperspace;
+                                        var hs = drive.hyperspace;
                                         hs.FleetLeaderGridId = msg.LeaderGridId;
                                         hs.Mode = joinLobby.Mode;
                                         hs.JumpDistanceRatio = joinLobby.JumpDistanceRatio;
@@ -1135,7 +1135,7 @@ namespace WarpDriveMod
                     if (MyAPIGateway.Multiplayer.IsServer)
                     {
                         byte[] data = MyAPIGateway.Utilities.SerializeToBinary(msg);
-                        MyAPIGateway.Multiplayer.SendMessageToOthers(WarpDriveSession.fleetJumpPacketId, data);
+                        MyAPIGateway.Multiplayer.SendMessageToOthers(WarpDriveSession.fleetJumpPacket, data);
                     }
                     break;
 
@@ -1144,7 +1144,7 @@ namespace WarpDriveMod
                     if (MyAPIGateway.Multiplayer.IsServer)
                     {
                         byte[] data = MyAPIGateway.Utilities.SerializeToBinary(msg);
-                        MyAPIGateway.Multiplayer.SendMessageToOthers(WarpDriveSession.fleetJumpPacketId, data);
+                        MyAPIGateway.Multiplayer.SendMessageToOthers(WarpDriveSession.fleetJumpPacket, data);
                     }
                     break;
 
@@ -1153,7 +1153,7 @@ namespace WarpDriveMod
                     if (MyAPIGateway.Multiplayer.IsServer)
                     {
                         byte[] data = MyAPIGateway.Utilities.SerializeToBinary(msg);
-                        MyAPIGateway.Multiplayer.SendMessageToOthers(WarpDriveSession.fleetJumpPacketId, data);
+                        MyAPIGateway.Multiplayer.SendMessageToOthers(WarpDriveSession.fleetJumpPacket, data);
                     }
                     break;
 
@@ -1161,7 +1161,7 @@ namespace WarpDriveMod
                     if (MyAPIGateway.Multiplayer.IsServer)
                     {
                         byte[] data = MyAPIGateway.Utilities.SerializeToBinary(msg);
-                        MyAPIGateway.Multiplayer.SendMessageToOthers(WarpDriveSession.fleetJumpPacketId, data);
+                        MyAPIGateway.Multiplayer.SendMessageToOthers(WarpDriveSession.fleetJumpPacket, data);
                     }
                     FleetJumpLobby execLobby;
                     if (_activeLobbies.TryGetValue(msg.LeaderGridId, out execLobby))
@@ -1178,11 +1178,11 @@ namespace WarpDriveMod
             byte[] data = MyAPIGateway.Utilities.SerializeToBinary(msg);
             if (MyAPIGateway.Multiplayer.IsServer)
             {
-                MyAPIGateway.Multiplayer.SendMessageToOthers(WarpDriveSession.fleetJumpPacketId, data);
+                MyAPIGateway.Multiplayer.SendMessageToOthers(WarpDriveSession.fleetJumpPacket, data);
             }
             else
             {
-                MyAPIGateway.Multiplayer.SendMessageToServer(WarpDriveSession.fleetJumpPacketId, data);
+                MyAPIGateway.Multiplayer.SendMessageToServer(WarpDriveSession.fleetJumpPacket, data);
             }
         }
 

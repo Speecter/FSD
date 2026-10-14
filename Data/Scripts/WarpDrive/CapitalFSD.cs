@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -22,14 +22,23 @@ namespace WarpDriveMod
     {
         public enum CapState
         {
-            Idle,
-            Charging,       // 48s charge
-            HoldingCharge,  // Waiting for alignment within 5°
-            EngageRiser,    // 1s riser before wormhole
-            JumpIn,         // 14s wormhole entry & mesh wipe
-            Transit,        // 21s - 42s hyperspace transit with smooth micro-teleportation
-            JumpOut,        // 18s wormhole exit & mesh reveal
-            Cooldown        // 5s cooldown
+            idle,
+            charging,       // 48s charge
+            holdingCharge,  // Waiting for alignment within 5°
+            engageRiser,    // 1s riser before wormhole
+            jumpIn,         // 14s wormhole entry & mesh wipe
+            transit,        // 21s - 42s hyperspace transit with smooth micro-teleportation
+            jumpOut,        // 18s wormhole exit & mesh reveal
+            cooldown,       // 5s cooldown
+
+            Idle = idle,
+            Charging = charging,
+            HoldingCharge = holdingCharge,
+            EngageRiser = engageRiser,
+            JumpIn = jumpIn,
+            Transit = transit,
+            JumpOut = jumpOut,
+            Cooldown = cooldown
         }
 
         // Timing Constants
@@ -56,23 +65,37 @@ namespace WarpDriveMod
         public const double MIN_CAPITAL_JUMP_DISTANCE = 50000.0;     // 50 km
         public const double HARD_MAX_CAPITAL_JUMP_DISTANCE = 40000000.0; // 40,000 km
 
-        public CapState State { get; private set; } = CapState.Idle;
-        public WarpDrive HostDrive { get; private set; }
-        public GridSystem GridSystem { get; private set; }
+        public CapState state { get; private set; } = CapState.idle;
+        public CapState State { get { return state; } private set { state = value; } }
+        public WarpDrive hostDrive { get; private set; }
+        public WarpDrive HostDrive { get { return hostDrive; } private set { hostDrive = value; } }
+        public GridSystem gridSystem { get; private set; }
+        public GridSystem GridSystem { get { return gridSystem; } private set { gridSystem = value; } }
 
-        public float JumpDistanceRatio { get; set; } = 1.0f;
-        public HyperspaceSystem.JumpMode Mode { get; set; } = HyperspaceSystem.JumpMode.ManualDistance;
-        public string SelectedGpsName { get; set; } = string.Empty;
-        public Vector3D? SelectedGpsCoords { get; set; } = null;
+        public float jumpDistanceRatio { get; set; } = 1.0f;
+        public float JumpDistanceRatio { get { return jumpDistanceRatio; } set { jumpDistanceRatio = value; } }
+        public HyperspaceSystem.JumpMode mode { get; set; } = HyperspaceSystem.JumpMode.ManualDistance;
+        public HyperspaceSystem.JumpMode Mode { get { return mode; } set { mode = value; } }
+        public string selectedGpsName { get; set; } = string.Empty;
+        public string SelectedGpsName { get { return selectedGpsName; } set { selectedGpsName = value; } }
+        public Vector3D? selectedGpsCoords { get; set; } = null;
+        public Vector3D? SelectedGpsCoords { get { return selectedGpsCoords; } set { selectedGpsCoords = value; } }
 
         // Active Jump Vectors
-        public Vector3D JumpOrigin { get; private set; }
-        public Vector3D JumpDestination { get; private set; }
-        public Vector3D JumpDirection { get; private set; }
-        public MatrixD JumpOrientation { get; private set; } = MatrixD.Identity;
-        public double JumpDistance { get; private set; }
-        public float TransitDuration { get; private set; }
-        public double CurrentTransitSpeed { get; private set; }
+        public Vector3D jumpOrigin { get; private set; }
+        public Vector3D JumpOrigin { get { return jumpOrigin; } private set { jumpOrigin = value; } }
+        public Vector3D jumpDestination { get; private set; }
+        public Vector3D JumpDestination { get { return jumpDestination; } private set { jumpDestination = value; } }
+        public Vector3D jumpDirection { get; private set; }
+        public Vector3D JumpDirection { get { return jumpDirection; } private set { jumpDirection = value; } }
+        public MatrixD jumpOrientation { get; private set; } = MatrixD.Identity;
+        public MatrixD JumpOrientation { get { return jumpOrientation; } private set { jumpOrientation = value; } }
+        public double jumpDistance { get; private set; }
+        public double JumpDistance { get { return jumpDistance; } private set { jumpDistance = value; } }
+        public float transitDuration { get; private set; }
+        public float TransitDuration { get { return transitDuration; } private set { transitDuration = value; } }
+        public double currentTransitSpeed { get; private set; }
+        public double CurrentTransitSpeed { get { return currentTransitSpeed; } private set { currentTransitSpeed = value; } }
 
         // State Machine Timers (in ticks, 60 ticks = 1 second)
         private long stateElapsedTicks = 0;
@@ -135,11 +158,11 @@ namespace WarpDriveMod
             HostDrive = drive;
             EnsureGridSystem();
 
-            WarpDriveSession.Instance?.RegisterCapitalFSD(this);
+            WarpDriveSession.instance?.RegisterCapitalFSD(this);
 
             if (!MyAPIGateway.Utilities.IsDedicated)
             {
-                var cubeGrid = HostDrive?.Block?.CubeGrid as MyCubeGrid;
+                var cubeGrid = HostDrive?.block?.CubeGrid as MyCubeGrid;
                 if (cubeGrid != null)
                 {
                     localEmitter = new MyEntity3DSoundEmitter(cubeGrid)
@@ -152,12 +175,19 @@ namespace WarpDriveMod
 
         private void EnsureGridSystem()
         {
-            if (GridSystem == null || GridSystem.MainGrid == null || GridSystem.MainGrid.MarkedForClose)
+            if (GridSystem == null || GridSystem.mainGrid == null || GridSystem.mainGrid.MarkedForClose)
             {
-                var grid = HostDrive?.Block?.CubeGrid as MyCubeGrid;
-                if (grid != null && !grid.MarkedForClose)
+                if (HostDrive?.warpSystem?.grid != null && !HostDrive.warpSystem.grid.mainGrid.MarkedForClose)
                 {
-                    GridSystem = new GridSystem(grid);
+                    GridSystem = HostDrive.warpSystem.grid;
+                }
+                else
+                {
+                    var grid = HostDrive?.block?.CubeGrid as MyCubeGrid;
+                    if (grid != null && !grid.MarkedForClose)
+                    {
+                        GridSystem = new GridSystem(grid);
+                    }
                 }
             }
         }
@@ -168,7 +198,7 @@ namespace WarpDriveMod
 
         public void Close()
         {
-            WarpDriveSession.Instance?.UnregisterCapitalFSD(this);
+            WarpDriveSession.instance?.UnregisterCapitalFSD(this);
 
             if (State != CapState.Idle)
             {
@@ -194,9 +224,9 @@ namespace WarpDriveMod
 
         public void SendNotification(string text, float seconds = 4f, string color = "White")
         {
-            if (HostDrive?.System != null)
+            if (HostDrive?.warpSystem != null)
             {
-                HostDrive.System.SendMessage(text, seconds, color, triggeringPlayerId);
+                HostDrive.warpSystem.SendMessage(text, seconds, color, triggeringPlayerId);
             }
             else
             {
@@ -222,7 +252,7 @@ namespace WarpDriveMod
 
             triggeringPlayerId = playerId;
 
-            if (HostDrive == null || HostDrive.IsDuplicateFSD || HostDrive.Block == null || !HostDrive.Block.IsFunctional || !HostDrive.Block.IsWorking || !HostDrive.Block.Enabled)
+            if (HostDrive == null || HostDrive.isDuplicateFSD || HostDrive.block == null || !HostDrive.block.IsFunctional || !HostDrive.block.IsWorking || !HostDrive.block.Enabled)
             {
                 SendNotification("FRAME SHIFT DRIVE OFFLINE OR DAMAGED (Only 1 active FSD allowed per ship)", 5f, "Red");
                 return;
@@ -230,26 +260,26 @@ namespace WarpDriveMod
 
             EnsureGridSystem();
 
-            var mainGrid = GridSystem?.MainGrid ?? HostDrive?.Block?.CubeGrid as MyCubeGrid;
+            var mainGrid = GridSystem?.mainGrid ?? HostDrive?.block?.CubeGrid as MyCubeGrid;
             if (mainGrid == null)
             {
                 SendNotification("GRID NOT INITIALIZED", 4f, "Red");
                 return;
             }
 
-            if (WarpDriveSession.Instance != null && (WarpDriveSession.Instance.IsHyperspaceActiveForGrid(mainGrid) || WarpDriveSession.Instance.IsInHyperspaceOrTransit(mainGrid)))
+            if (WarpDriveSession.instance != null && (WarpDriveSession.instance.IsHyperspaceActiveForGrid(mainGrid) || WarpDriveSession.instance.IsInHyperspaceOrTransit(mainGrid)))
             {
                 SendNotification("HYPERSPACE IN USE - CAPITAL FSD BLOCKED", 4f, "Red");
                 return;
             }
 
-            if (WarpDriveSession.Instance != null && WarpDriveSession.Instance.IsSupercruiseActiveForGrid(mainGrid))
+            if (WarpDriveSession.instance != null && WarpDriveSession.instance.IsSupercruiseActiveForGrid(mainGrid))
             {
                 SendNotification("SUPERCRUISE IN USE - CAPITAL FSD BLOCKED", 4f, "Red");
                 return;
             }
 
-            if (HostDrive?.System != null && HostDrive.System.WarpState != WarpSystem.State.Idle)
+            if (HostDrive?.warpSystem != null && HostDrive.warpSystem.warpState != WarpSystem.State.idle)
             {
                 SendNotification("SUPERCRUISE IN USE - CAPITAL FSD BLOCKED", 4f, "Red");
                 return;
@@ -272,7 +302,7 @@ namespace WarpDriveMod
             Vector3D checkPos = cockpit.WorldMatrix.Translation;
             float naturalGravityMultiplier;
             Vector3D naturalGravity = MyAPIGateway.Physics.CalculateNaturalGravityAt(checkPos, out naturalGravityMultiplier);
-            float allowInGravityMax = HostDrive?.Settings?.AllowInGravityMax ?? 0.2f;
+            float allowInGravityMax = (Settings.instance?.AllowInGravityMax ?? 0.2f);
             if (naturalGravityMultiplier > allowInGravityMax)
             {
                 SendNotification($"CANNOT ENGAGE FSD IN GRAVITY > {allowInGravityMax:F2}g", 5f, "Red");
@@ -286,7 +316,7 @@ namespace WarpDriveMod
             }
 
             // Power check
-            if (!HostDrive.HasPower && !(MyAPIGateway.Session?.CreativeMode ?? false))
+            if (!HostDrive.hasPower && !(MyAPIGateway.Session?.CreativeMode ?? false))
             {
                 SendNotification("NOT ENOUGH POWER TO INITIATE FSD CHARGE", 5f, "Red");
                 return;
@@ -357,7 +387,7 @@ namespace WarpDriveMod
             // Planetary gravity well destination check (uses AllowInGravityMax setting like HyperspaceSystem)
             float dummyGravity;
             Vector3D destGravity = MyAPIGateway.Physics.CalculateNaturalGravityAt(JumpDestination, out dummyGravity);
-            allowInGravityMax = HostDrive?.Settings?.AllowInGravityMax ?? 0.2f;
+            allowInGravityMax = (Settings.instance?.AllowInGravityMax ?? 0.2f);
             if ((destGravity.Length() / WarpSystem.EARTH_GRAVITY) > allowInGravityMax)
             {
                 SendNotification("DESTINATION INSIDE PLANETARY GRAVITY WELL!", 5f, "Red");
@@ -388,7 +418,7 @@ namespace WarpDriveMod
 
             if (State == CapState.Idle) return;
 
-            var mainGrid = GridSystem?.MainGrid;
+            var mainGrid = GridSystem?.mainGrid;
             if (mainGrid == null || mainGrid.MarkedForClose)
             {
                 AbortJump("GRID INVALID");
@@ -431,18 +461,18 @@ namespace WarpDriveMod
 
         private void UpdateChargingTick()
         {
-            var mainGrid = GridSystem?.MainGrid;
+            var mainGrid = GridSystem?.mainGrid;
             if (mainGrid == null) { AbortJump("GRID INVALID"); return; }
 
             // FSD block damage abort
-            if (HostDrive?.Block == null || !HostDrive.Block.IsFunctional || !HostDrive.Block.IsWorking)
+            if (HostDrive?.block == null || !HostDrive.block.IsFunctional || !HostDrive.block.IsWorking)
             {
                 AbortJump("FSD DAMAGED - CHARGING ABORTED");
                 return;
             }
 
             // Power loss abort
-            if (!HostDrive.HasPower && !(MyAPIGateway.Session?.CreativeMode ?? false))
+            if (!HostDrive.hasPower && !(MyAPIGateway.Session?.CreativeMode ?? false))
             {
                 AbortJump("POWER FAILURE - CHARGING ABORTED");
                 return;
@@ -451,7 +481,7 @@ namespace WarpDriveMod
             // Gravity abort (matches HyperspaceSystem behaviour)
             float dummyGravCheck;
             Vector3D gravCheck = MyAPIGateway.Physics.CalculateNaturalGravityAt(mainGrid.PositionComp.GetPosition(), out dummyGravCheck);
-            float allowGravMax = HostDrive?.Settings?.AllowInGravityMax ?? 0.2f;
+            float allowGravMax = (Settings.instance?.AllowInGravityMax ?? 0.2f);
             if ((gravCheck.Length() / WarpSystem.EARTH_GRAVITY) > allowGravMax)
             {
                 AbortJump("GRAVITY WELL DETECTED - CHARGING ABORTED");
@@ -459,9 +489,9 @@ namespace WarpDriveMod
             }
 
             // Static/docked abort
-            if (mainGrid.IsStatic || (HostDrive?.System != null && HostDrive.System.ConnectedStatic(mainGrid)))
+            if (mainGrid.IsStatic || (HostDrive?.warpSystem != null && HostDrive.warpSystem.ConnectedStatic(mainGrid)))
             {
-                AbortJump(HostDrive?.System?.warnStatic ?? "STATIC GRID - CHARGING ABORTED");
+                AbortJump(HostDrive?.warpSystem?.warnIsStaticHUD ?? "STATIC GRID - CHARGING ABORTED");
                 return;
             }
 
@@ -532,9 +562,9 @@ namespace WarpDriveMod
             {
                 if (Mode == HyperspaceSystem.JumpMode.GpsWaypoint)
                 {
-                    MatrixD finalAligned = MicroAdjustOrientation(GridSystem.MainGrid.WorldMatrix, targetDir, 1.0f);
+                    MatrixD finalAligned = MicroAdjustOrientation(GridSystem.mainGrid.WorldMatrix, targetDir, 1.0f);
                     if (MyAPIGateway.Multiplayer.IsServer || MyAPIGateway.Utilities.IsDedicated)
-                        GridSystem.MainGrid.Teleport(finalAligned);
+                        GridSystem.mainGrid.Teleport(finalAligned);
                 }
                 StartEngageRiser();
             }
@@ -542,16 +572,16 @@ namespace WarpDriveMod
 
         private void UpdateHoldingChargeTick()
         {
-            var mainGrid = GridSystem?.MainGrid;
+            var mainGrid = GridSystem?.mainGrid;
             if (mainGrid == null) { AbortJump("GRID INVALID"); return; }
 
             // Hazard abort checks (matches HyperspaceSystem.UpdateHoldingChargeTick)
-            if (HostDrive?.Block == null || !HostDrive.Block.IsFunctional || !HostDrive.Block.IsWorking)
+            if (HostDrive?.block == null || !HostDrive.block.IsFunctional || !HostDrive.block.IsWorking)
             {
                 AbortJump("CHARGE COLLAPSED - FSD DAMAGED");
                 return;
             }
-            if (!HostDrive.HasPower && !(MyAPIGateway.Session?.CreativeMode ?? false))
+            if (!HostDrive.hasPower && !(MyAPIGateway.Session?.CreativeMode ?? false))
             {
                 AbortJump("CHARGE COLLAPSED - POWER FAILURE");
                 return;
@@ -559,16 +589,16 @@ namespace WarpDriveMod
 
             float dummyGravHold;
             Vector3D gravHold = MyAPIGateway.Physics.CalculateNaturalGravityAt(mainGrid.PositionComp.GetPosition(), out dummyGravHold);
-            float allowGravMaxH = HostDrive?.Settings?.AllowInGravityMax ?? 0.2f;
+            float allowGravMaxH = (Settings.instance?.AllowInGravityMax ?? 0.2f);
             if ((gravHold.Length() / WarpSystem.EARTH_GRAVITY) > allowGravMaxH)
             {
                 AbortJump("CHARGE COLLAPSED - GRAVITY WELL DETECTED");
                 return;
             }
 
-            if (mainGrid.IsStatic || (HostDrive?.System != null && HostDrive.System.ConnectedStatic(mainGrid)))
+            if (mainGrid.IsStatic || (HostDrive?.warpSystem != null && HostDrive.warpSystem.ConnectedStatic(mainGrid)))
             {
-                AbortJump(HostDrive?.System?.warnStatic ?? "STATIC GRID - CHARGE ABORTED");
+                AbortJump(HostDrive?.warpSystem?.warnIsStaticHUD ?? "STATIC GRID - CHARGE ABORTED");
                 return;
             }
 
@@ -628,7 +658,7 @@ namespace WarpDriveMod
             var cockpit = GridSystem?.FindMainCockpit();
             if (cockpit != null && cockpit.IsFunctional) return cockpit;
 
-            var mainGrid = GridSystem?.MainGrid;
+            var mainGrid = GridSystem?.mainGrid;
             if (mainGrid != null)
             {
                 foreach (var fat in mainGrid.GetFatBlocks())
@@ -647,7 +677,7 @@ namespace WarpDriveMod
             stateElapsedTicks = 0;
             stateTotalTicks = (long)(ENGAGE_RISER_SECONDS * 60f);
 
-            var mainGrid = GridSystem?.MainGrid;
+            var mainGrid = GridSystem?.mainGrid;
             if (mainGrid != null)
             {
                 JumpOrigin = mainGrid.PositionComp.GetPosition();
@@ -675,7 +705,7 @@ namespace WarpDriveMod
             CollectPlayersOnGrid();
             SetGridInvincibility(true);
 
-            var mainGrid = GridSystem.MainGrid;
+            var mainGrid = GridSystem.mainGrid;
             Vector3D forward = JumpDirection.LengthSquared() > 0.001 ? JumpDirection : mainGrid.WorldMatrix.Forward;
             Vector3D center = mainGrid.PositionComp.WorldAABB.Center;
 
@@ -713,7 +743,7 @@ namespace WarpDriveMod
         {
             if (currentWipe == null) return;
 
-            var mainGrid = GridSystem?.MainGrid;
+            var mainGrid = GridSystem?.mainGrid;
             if (mainGrid == null) return;
 
             float elapsedSeconds = stateElapsedTicks / 60f;
@@ -766,7 +796,7 @@ namespace WarpDriveMod
             // Final destination gravity check
             float dummyFinal;
             Vector3D destGravFinal = MyAPIGateway.Physics.CalculateNaturalGravityAt(JumpDestination, out dummyFinal);
-            float allowGravFinal = HostDrive?.Settings?.AllowInGravityMax ?? 0.2f;
+            float allowGravFinal = (Settings.instance?.AllowInGravityMax ?? 0.2f);
             if ((destGravFinal.Length() / WarpSystem.EARTH_GRAVITY) > allowGravFinal)
             {
                 AbortJump("DESTINATION INSIDE PLANETARY GRAVITY WELL!");
@@ -774,7 +804,7 @@ namespace WarpDriveMod
             }
 
             // Zero-power guard at transit entry (matches HyperspaceSystem.EnterHyperspace)
-            if (!HostDrive.HasPower && !(MyAPIGateway.Session?.CreativeMode ?? false))
+            if (!HostDrive.hasPower && !(MyAPIGateway.Session?.CreativeMode ?? false))
             {
                 AbortJump("POWER FAILURE - JUMP ABORTED AT ENTRY");
                 return;
@@ -807,13 +837,13 @@ namespace WarpDriveMod
 
         private void UpdateTransitTick()
         {
-            var mainGrid = GridSystem?.MainGrid;
+            var mainGrid = GridSystem?.mainGrid;
             if (mainGrid == null) return;
 
             // --- Power & FSD loss detection during transit (matches HyperspaceSystem.UpdateTransitTick) ---
-            bool fsdIssue = HostDrive == null || HostDrive.Block == null
-                || !HostDrive.Block.Enabled
-                || !HostDrive.Block.IsFunctional;
+            bool fsdIssue = HostDrive == null || HostDrive.block == null
+                || !HostDrive.block.Enabled
+                || !HostDrive.block.IsFunctional;
 
             if (fsdIssue)
                 fsdLossTicks++;
@@ -824,13 +854,13 @@ namespace WarpDriveMod
             if (stateElapsedTicks % 10 == 0 && !(MyAPIGateway.Session?.CreativeMode ?? false))
             {
                 bool hasPower = false;
-                var grids = GridSystem?.Grids;
+                var grids = GridSystem?.gridGroup;
                 if (grids != null && grids.Count > 0)
                 {
                     foreach (var g in grids)
                     {
                         if (g == null || g.MarkedForClose) continue;
-                        foreach (var block in g.GetFatBlocks())
+                        foreach (var block in (g as MyCubeGrid)?.GetFatBlocks() ?? System.Linq.Enumerable.Empty<MyCubeBlock>())
                         {
                             var producer = block as IMyPowerProducer;
                             if (producer == null || !producer.IsFunctional || !producer.Enabled) continue;
@@ -844,7 +874,7 @@ namespace WarpDriveMod
                 }
                 else
                 {
-                    hasPower = HostDrive?.HasPower ?? false;
+                    hasPower = HostDrive?.hasPower ?? false;
                 }
 
                 if (!hasPower)
@@ -904,7 +934,7 @@ namespace WarpDriveMod
             {
                 float localGrav;
                 Vector3D naturalGrav = MyAPIGateway.Physics.CalculateNaturalGravityAt(currentPos, out localGrav);
-                float allowInGravMax = HostDrive?.Settings?.AllowInGravityMax ?? 0.2f;
+                float allowInGravMax = (Settings.instance?.AllowInGravityMax ?? 0.2f);
                 if ((naturalGrav.Length() / WarpSystem.EARTH_GRAVITY) > allowInGravMax)
                 {
                     AbortJump("GRAVITY WELL EXCLUSION ZONE - TRANSIT ABORTED!");
@@ -1008,7 +1038,7 @@ namespace WarpDriveMod
             StopTransitParticles();
             StopTransitSound();
 
-            var mainGrid = GridSystem.MainGrid;
+            var mainGrid = GridSystem.mainGrid;
             Vector3D forward = JumpDirection.LengthSquared() > 0.001 ? JumpDirection : mainGrid.WorldMatrix.Forward;
 
             double noseOffset, shipLength, crossRadius;
@@ -1057,7 +1087,7 @@ namespace WarpDriveMod
         {
             if (currentWipe == null) return;
 
-            var mainGrid = GridSystem?.MainGrid;
+            var mainGrid = GridSystem?.mainGrid;
             if (mainGrid == null) return;
 
             float elapsedSeconds = stateElapsedTicks / 60f;
@@ -1101,7 +1131,7 @@ namespace WarpDriveMod
             SetPlayersSave(true);
             _playersInTransit.Clear();
 
-            var mainGrid = GridSystem?.MainGrid;
+            var mainGrid = GridSystem?.mainGrid;
             if (mainGrid != null)
             {
                 HyperspaceSystem.UnregisterClaim(mainGrid.EntityId);
@@ -1137,7 +1167,7 @@ namespace WarpDriveMod
 
         public void AbortJump(string reason)
         {
-            var mainGrid = GridSystem?.MainGrid;
+            var mainGrid = GridSystem?.mainGrid;
             if (mainGrid != null)
             {
                 HyperspaceSystem.UnregisterClaim(mainGrid.EntityId);
@@ -1163,7 +1193,7 @@ namespace WarpDriveMod
             shipLength = 100.0;
             crossRadius = 30.0;
 
-            var mainGrid = GridSystem?.MainGrid;
+            var mainGrid = GridSystem?.mainGrid;
             if (mainGrid == null) return;
 
             Vector3D center = mainGrid.PositionComp.WorldAABB.Center;
@@ -1224,13 +1254,13 @@ namespace WarpDriveMod
         private void CollectPlayersOnGrid()
         {
             _playersInTransit.Clear();
-            var grids = GridSystem?.Grids;
+            var grids = GridSystem?.gridGroup;
             if (grids == null || grids.Count == 0) return;
 
             var seatedEntityIds = new List<long>();
             foreach (var grid in grids)
             {
-                foreach (var block in grid.GetFatBlocks())
+                foreach (var block in (grid as MyCubeGrid)?.GetFatBlocks() ?? System.Linq.Enumerable.Empty<MyCubeBlock>())
                 {
                     if (block == null) continue;
                     var cockpit = block as IMyCockpit;
@@ -1268,13 +1298,13 @@ namespace WarpDriveMod
 
         private void SetGridInvincibility(bool invincible)
         {
-            var grids = GridSystem?.Grids;
+            var grids = GridSystem?.gridGroup;
             if (grids == null) return;
             bool defaultDestructible = MyAPIGateway.Session?.SessionSettings?.DestructibleBlocks ?? true;
             foreach (var grid in grids)
             {
                 if (grid == null || grid.MarkedForClose) continue;
-                grid.DestructibleBlocks = invincible ? false : defaultDestructible;
+                var cg = grid as MyCubeGrid; if (cg != null) cg.DestructibleBlocks = invincible ? false : defaultDestructible;
             }
         }
 
@@ -1290,7 +1320,7 @@ namespace WarpDriveMod
             session.HiddenFatBlocks.Clear();
             session.AccumulatedTravel = 0.0;
 
-            var mainGrid = GridSystem?.MainGrid;
+            var mainGrid = GridSystem?.mainGrid;
             if (mainGrid == null) return;
 
             List<IMyCubeGrid> attachedGrids = new List<IMyCubeGrid>();
@@ -1385,7 +1415,7 @@ namespace WarpDriveMod
 
         public void RestoreAllBlocksVisibility(bool forceForAll = true)
         {
-            var mainGrid = GridSystem?.MainGrid;
+            var mainGrid = GridSystem?.mainGrid;
             if (mainGrid == null) return;
 
             if (!forceForAll)
@@ -1475,7 +1505,7 @@ namespace WarpDriveMod
 
         private void SafeTeleportMainGrid(MatrixD targetMatrix)
         {
-            var mainGrid = GridSystem?.MainGrid;
+            var mainGrid = GridSystem?.mainGrid;
             if (mainGrid == null) return;
 
             if (MyAPIGateway.Multiplayer.IsServer || MyAPIGateway.Utilities.IsDedicated)
@@ -1488,7 +1518,7 @@ namespace WarpDriveMod
 
         private void ClearPhysicsVelocities()
         {
-            var mainGrid = GridSystem?.MainGrid;
+            var mainGrid = GridSystem?.mainGrid;
             if (mainGrid == null) return;
 
             List<IMyCubeGrid> attachedGrids = new List<IMyCubeGrid>();
@@ -1552,10 +1582,10 @@ namespace WarpDriveMod
                 var foundGrid = ent as IMyCubeGrid;
                 if (foundGrid != null)
                 {
-                    if (GridSystem != null && GridSystem.Grids != null)
+                    if (GridSystem != null && GridSystem.gridGroup != null)
                     {
                         bool isMember = false;
-                        foreach (var g in GridSystem.Grids)
+                        foreach (var g in GridSystem.gridGroup)
                         {
                             if (g != null && g.EntityId == foundGrid.EntityId)
                             {
@@ -1617,11 +1647,11 @@ namespace WarpDriveMod
             safeDist = dist;
             bool adjusted = false;
 
-            double shipRadius = GridSystem?.MainGrid?.PositionComp.WorldAABB.HalfExtents.AbsMax() ?? 50.0;
+            double shipRadius = GridSystem?.mainGrid?.PositionComp.WorldAABB.HalfExtents.AbsMax() ?? 50.0;
             double safetyBuffer = 500.0 + shipRadius;
             double searchRadius = Math.Max(safetyBuffer * 4.0, 6000.0);
 
-            long myGridId = GridSystem?.MainGrid?.EntityId ?? 0L;
+            long myGridId = GridSystem?.mainGrid?.EntityId ?? 0L;
 
             BoundingSphereD searchSphere = new BoundingSphereD(safeDest, searchRadius);
             List<IMyEntity> entities = MyAPIGateway.Entities.GetTopMostEntitiesInSphere(ref searchSphere);
@@ -1806,7 +1836,7 @@ namespace WarpDriveMod
             {
                 if (localEmitter == null)
                 {
-                    var cubeGrid = HostDrive?.Block?.CubeGrid as MyCubeGrid;
+                    var cubeGrid = HostDrive?.block?.CubeGrid as MyCubeGrid;
                     if (cubeGrid != null)
                     {
                         localEmitter = new MyEntity3DSoundEmitter(cubeGrid)
@@ -1983,14 +2013,14 @@ namespace WarpDriveMod
         {
             // Only spawn tunnel visuals and audio if the local player is actually aboard the ship
             // (matches HyperspaceSystem.StartTunnelParticle which calls IsLocalPlayerOnboard)
-            if (MyAPIGateway.Utilities.IsDedicated || GridSystem?.MainGrid == null) return;
+            if (MyAPIGateway.Utilities.IsDedicated || GridSystem?.mainGrid == null) return;
             if (!IsLocalPlayerOnboard()) return;
 
             try
             {
                 StopTransitParticles();
 
-                var mainGrid = GridSystem.MainGrid;
+                var mainGrid = GridSystem.mainGrid;
                 MatrixD gridMatrix = mainGrid.WorldMatrix;
                 Vector3D forward = JumpDirection.LengthSquared() > 0.001 ? JumpDirection : gridMatrix.Forward;
                 Vector3D origin = mainGrid.PositionComp.WorldAABB.Center;
@@ -2047,7 +2077,7 @@ namespace WarpDriveMod
 
         private void UpdateTransitTunnelFX()
         {
-            if (MyAPIGateway.Utilities.IsDedicated || GridSystem?.MainGrid == null) return;
+            if (MyAPIGateway.Utilities.IsDedicated || GridSystem?.mainGrid == null) return;
 
             if (!IsLocalPlayerOnboard())
             {
@@ -2064,7 +2094,7 @@ namespace WarpDriveMod
 
             try
             {
-                var mainGrid = GridSystem.MainGrid;
+                var mainGrid = GridSystem.mainGrid;
                 MatrixD gridMatrix = mainGrid.WorldMatrix;
                 Vector3D forward = JumpDirection.LengthSquared() > 0.001 ? JumpDirection : gridMatrix.Forward;
                 Vector3D origin = mainGrid.PositionComp.WorldAABB.Center;
@@ -2159,10 +2189,10 @@ namespace WarpDriveMod
             if (localPlayer?.Character == null) return false;
 
             var seatedBlock = localPlayer.Character.Parent as VRage.Game.ModAPI.IMyCubeBlock;
-            if (seatedBlock != null && GridSystem?.Grids != null)
+            if (seatedBlock != null && GridSystem?.gridGroup != null)
             {
                 var playerGrid = seatedBlock.CubeGrid;
-                foreach (var g in GridSystem.Grids)
+                foreach (var g in GridSystem.gridGroup)
                 {
                     if (g != null && g.EntityId == playerGrid.EntityId)
                         return true;
@@ -2198,7 +2228,7 @@ namespace WarpDriveMod
 
         private void DrawHyperspaceBackdrop()
         {
-            if (MyAPIGateway.Utilities.IsDedicated || GridSystem?.MainGrid == null)
+            if (MyAPIGateway.Utilities.IsDedicated || GridSystem?.mainGrid == null)
                 return;
 
             try
@@ -2212,10 +2242,10 @@ namespace WarpDriveMod
                 if (!isValidView)
                 {
                     var cubeBlock = controller as VRage.Game.ModAPI.IMyCubeBlock;
-                    if (cubeBlock != null && GridSystem.Grids != null)
+                    if (cubeBlock != null && GridSystem.gridGroup != null)
                     {
                         var playerGrid = cubeBlock.CubeGrid;
-                        foreach (var g in GridSystem.Grids)
+                        foreach (var g in GridSystem.gridGroup)
                         {
                             if (g != null && g.EntityId == playerGrid.EntityId)
                             {
@@ -2229,7 +2259,7 @@ namespace WarpDriveMod
                 if (!isValidView)
                     return;
 
-                var mainGrid = GridSystem.MainGrid;
+                var mainGrid = GridSystem.mainGrid;
                 MatrixD gridMatrix = mainGrid.WorldMatrix;
                 Vector3D center = mainGrid.PositionComp.WorldAABB.Center;
 
@@ -2310,7 +2340,7 @@ namespace WarpDriveMod
 
             EnsureGridSystem();
 
-            var mainGrid = GridSystem?.MainGrid;
+            var mainGrid = GridSystem?.mainGrid;
             var cockpit = GridSystem?.FindMainCockpit();
             if (mainGrid == null || cockpit == null) return;
 

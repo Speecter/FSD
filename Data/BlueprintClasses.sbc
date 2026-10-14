@@ -12,5 +12,9 @@
     <Entry Class="LargeBlocks" BlueprintSubtypeId="UpgradeModule/PrototechFSDriveLarge_9S" />
     <Entry Class="SmallBlocks" BlueprintSubtypeId="UpgradeModule/PrototechFSDriveSmall" />
     <Entry Class="SmallBlocks" BlueprintSubtypeId="UpgradeModule/PrototechFSDriveSmall_S" />
+    <Entry Class="LargeBlocks" BlueprintSubtypeId="UpgradeModule/HeatSinkLarge" />
+    <Entry Class="LargeBlocks" BlueprintSubtypeId="UpgradeModule/HeatSinkVentLarge" />
+    <Entry Class="SmallBlocks" BlueprintSubtypeId="UpgradeModule/HeatSinkSmall" />
+    <Entry Class="SmallBlocks" BlueprintSubtypeId="UpgradeModule/HeatSinkVentSmall" />
   </BlueprintClassEntries>
 </Definitions>

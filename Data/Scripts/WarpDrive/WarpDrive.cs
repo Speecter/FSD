@@ -1,20 +1,16 @@
 using Sandbox.Common.ObjectBuilders;
 using Sandbox.Game;
 using Sandbox.Game.Entities;
-using Sandbox.Game.Entities.Character;
 using Sandbox.Game.EntityComponents;
-using Sandbox.Game.World;
 using Sandbox.ModAPI;
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Text;
 using VRage.Game;
 using VRage.Game.Components;
 using VRage.Game.Entity;
 using VRage.Game.ModAPI;
 using VRage.ModAPI;
-using VRage.Noise.Combiners;
 using VRage.ObjectBuilders;
 using VRage.Utils;
 using VRageMath;
@@ -29,52 +25,43 @@ namespace WarpDriveMod
         "PrototechFSDriveSmall", "PrototechFSDriveSmall_S")]
     public class WarpDrive : MyGameLogicComponent
     {
-        public IMyFunctionalBlock Block { get; private set; }
-        public WarpSystem System { get; private set; }
-        public HyperspaceSystem Hyperspace => System?.Hyperspace;
-        public CapitalFSD CapitalFSD => System?.CapitalFSD;
-        public Settings Settings { get; private set; }
-        public static WarpDrive Instance;
-        public bool HasPower => sink.CurrentInputByType(WarpConstants.ElectricityId) >= prevRequiredPower;
-        public bool BlockWasON = false;
-
-        public bool SupportsHyperspace
+        public IMyFunctionalBlock block { get; private set; }
+        public WarpSystem warpSystem { get; private set; }
+        public HyperspaceSystem hyperspace => warpSystem?.hyperspace;
+        public CapitalFSD capitalFSD => warpSystem?.capitalFSD;
+        public bool supportsHyperspace
         {
             get
             {
-                if (Block?.BlockDefinition == null) return false;
-                var sub = Block.BlockDefinition.SubtypeId;
+                if (block?.BlockDefinition == null) return false;
+                var sub = block.BlockDefinition.SubtypeId;
                 return sub.EndsWith("_A") || sub.EndsWith("_S")
                     || sub == "PrototechFSDriveLarge" || sub == "PrototechFSDriveSmall";
             }
         }
-
-        public bool IsPrototech
+        public bool isCapitalFSD
         {
             get
             {
-                if (Block?.BlockDefinition == null) return false;
-                var sub = Block.BlockDefinition.SubtypeId;
-                return sub.StartsWith("PrototechFSDrive");
+                if (block?.BlockDefinition == null) return false;
+                return block.BlockDefinition.SubtypeId == "PrototechFSDriveLarge_9S";
             }
         }
-
-        public bool IsCapitalFSD
+        public bool isPrototech
         {
             get
             {
-                if (Block?.BlockDefinition == null) return false;
-                var sub = Block.BlockDefinition.SubtypeId;
-                return sub == "PrototechFSDriveLarge_9S";
+                if (block?.BlockDefinition == null) return false;
+                return block.BlockDefinition.SubtypeId.StartsWith("Prototech");
             }
         }
-
-        public bool IsDuplicateFSD => System != null && System.FunctionalDrivesCount > 1;
-
-        private T CastProhibit<T>(T ptr, object val) => (T)val;
-
+        public bool isDuplicateFSD => warpSystem != null && warpSystem.functionalDrivesCount > 1;
+        public bool hasPower => sink.CurrentInputByType(MyResourceDistributorComponent.ElectricityId) >= Math.Min(prevRequiredPower, _requiredPower);
+        public float heat;
+        public bool isRestabilizing => countdownTick > 0;
+        
         // Ugly workaround
-        public float RequiredPower
+        public float requiredPower
         {
             get
             {
@@ -91,295 +78,264 @@ namespace WarpDriveMod
         private MyResourceSinkComponent sink;
         private long initStart;
         private bool started = false;
-        private int BlockOnTick = 0;
+        private bool sinkUpdated = false;
+        private int countdownTick;
         private float powerMultiplier = 1;
 
         public override void Init(MyObjectBuilder_EntityBase objectBuilder)
         {
             base.Init(objectBuilder);
 
-            Instance = this;
-            Block = (IMyFunctionalBlock)Entity;
-            Settings = Settings.Load();
+            block = (IMyFunctionalBlock)Entity;
+            Settings.GetShared();
 
             InitPowerSystem();
 
-            if (WarpDriveSession.Instance != null)
-                initStart = WarpDriveSession.Instance.Runtime;
-
-            MyVisualScriptLogicProvider.PlayerLeftCockpit += PlayerLeftCockpit;
+            if (WarpDriveSession.instance != null)
+                initStart = WarpDriveSession.instance.runtime;
 
             if (!MyAPIGateway.Utilities.IsDedicated)
-                Block.AppendingCustomInfo += Block_AppendingCustomInfo;
+                block.AppendingCustomInfo += Block_AppendingCustomInfo;
 
             NeedsUpdate = MyEntityUpdateEnum.EACH_FRAME | MyEntityUpdateEnum.EACH_10TH_FRAME;
         }
 
-        private void Block_AppendingCustomInfo(IMyTerminalBlock arg1, StringBuilder Info)
+        private void Block_AppendingCustomInfo(IMyTerminalBlock arg1, StringBuilder info)
         {
-            if (arg1 == null || Settings == null || System == null)
+            if (arg1 == null || Settings.instance == null || warpSystem == null)
                 return;
 
-            float _mass = 1;
-            if (System.GridsMass != null && System.GridsMass.Count > 0 && arg1.CubeGrid != null && System.GridsMass.ContainsKey(arg1.CubeGrid.EntityId))
-                System.GridsMass.TryGetValue(arg1.CubeGrid.EntityId, out _mass);
-            else
+            info?.AppendLine("Max Required Power: " + (WarpSystem.GetCruisePower(this, warpSystem.GetShipMass(), Settings.instance.maxSpeed) * powerMultiplier).ToString("N") + " MW");
+
+            info?.AppendLine("Current Required Power: " + requiredPower.ToString("N") + " MW");
+
+                float capacity, breakEvenPower;
+                warpSystem.HeatInfo(this, out capacity, out breakEvenPower);
+
+            if (HeatSink.heatEnabled)
             {
-                if (arg1.CubeGrid != null)
-                {
-                    _mass = System.CulcucateGridGlobalMass(arg1.CubeGrid);
-                    System.GridsMass[arg1.CubeGrid.EntityId] = _mass;
-                }
+                info?.AppendLine("System Heat: " + Math.Ceiling(heat * 10f).ToString("0") + "/" + (capacity * 10f).ToString("0"));
+
+                info?.AppendLine("Thermal Buildup Point: " + breakEvenPower.ToString("N") + " MW");
             }
-
-            float SpeedNormalize = (float)(Settings.maxSpeed * 0.06); // 60 / 1000
-            float SpeedCalc = 1f + (SpeedNormalize * SpeedNormalize);
-
-            float MassCalc;
-            if (arg1.CubeGrid.GridSizeEnum == MyCubeSize.Small)
-                MassCalc = _mass * (SpeedCalc / 0.528f) / 800000f;
-            else
-                MassCalc = _mass * (SpeedCalc / 0.528f) / 800000f;
-
-            float MaxNeededPower;
-
-            if (arg1.CubeGrid.GridSizeEnum == MyCubeSize.Large)
-            {
-                if (System.currentSpeedPt != Settings.maxSpeed)
-                    MaxNeededPower = (MassCalc + Settings.baseRequiredPower * 3) / Settings.powerRequirementBySpeedDeviderLarge * 0.9725f;
-                else
-                    MaxNeededPower = RequiredPower;
-            }
-            else
-            {
-                if (System.currentSpeedPt != Settings.maxSpeed)
-                    MaxNeededPower = (MassCalc + Settings.baseRequiredPowerSmall * 3) / Settings.powerRequirementBySpeedDeviderSmall * 0.9725f;
-                else
-                    MaxNeededPower = RequiredPower;
-            }
-
-            Info?.AppendLine("Max Required Power: " + MaxNeededPower.ToString("N") + " MW");
-
-            Info?.AppendLine("Required Power: " + RequiredPower.ToString("N") + " MW");
-
-            if (sink != null)
-                Info?.AppendLine("Current Power: " + sink.CurrentInputByType(WarpConstants.ElectricityId).ToString("N") + " MW");
-
-            Info?.Append("FSD Heat: ").Append(System.DriveHeat).Append("%\n");
         }
 
         public override void UpdateBeforeSimulation10()
         {
-            if (WarpDriveSession.Instance == null || Block == null)
+            if (WarpDriveSession.instance == null || block == null)
                 return;
 
-            // init once
-            if (Block != null)
-                WarpDriveSession.Instance.InitJumpControl();
-
-            if (BlockWasON)
-            {
-                if (BlockOnTick++ > 20)
-                {
-                    Block.Enabled = true;
-                    BlockWasON = false;
-                    BlockOnTick = 0;
-                }
-            }
+            WarpDriveSession.instance.InitJumpControl();
 
             if (!MyAPIGateway.Utilities.IsDedicated)
-                Block.RefreshCustomInfo();
+                block.RefreshCustomInfo();
         }
 
         public override void UpdateBeforeSimulation()
         {
-            if (WarpDriveSession.Instance == null)
+            if (WarpDriveSession.instance == null)
                 return;
+
+            if (countdownTick > 0 && --countdownTick == 0)
+                block.Enabled = true;
 
             if (!started)
             {
-                if (System != null && System.Valid)
+                if (warpSystem != null && warpSystem.valid)
                     started = true;
-                else if (initStart <= WarpDriveSession.Instance.Runtime - WarpConstants.groupSystemDelay)
+                else if (initStart <= WarpDriveSession.instance.runtime - 1)
                 {
-                    System = WarpDriveSession.Instance.GetWarpSystem(this);
-                    if (System == null)
+                    WarpSystem system = WarpDriveSession.instance.GetWarpSystem(this);
+                    if (system == null)
                         return;
 
-                    System.OnSystemInvalidatedAction += OnSystemInvalidated;
+                    SetWarpSystem(system);
                     started = true;
                 }
             }
             else
             {
+                bool inUse = warpSystem != null && warpSystem.warpState != WarpSystem.State.idle;
+                if (inUse || !sinkUpdated)
+                {
                 sink.Update();
+                    sinkUpdated = !inUse;
+                }
             }
+        }
+
+        public void IsRestabilizing()
+        {
+            if (block == null || !MyAPIGateway.Multiplayer.IsServer)
+                return;
+
+            block.Enabled = false;
+            countdownTick = 60;
         }
 
         public override void Close()
         {
-            try
+            if (!MyAPIGateway.Utilities.IsDedicated && block != null)
+                block.AppendingCustomInfo -= Block_AppendingCustomInfo;
+
+            if (warpSystem != null)
             {
-                if (Hyperspace != null)
-                {
-                    Hyperspace.Close();
-                }
-                if (CapitalFSD != null)
-                {
-                    CapitalFSD.Close();
-                }
+                warpSystem.OnSystemInvalidatedAction -= OnSystemInvalidated;
+                warpSystem.hyperspace?.Close();
+                warpSystem.capitalFSD?.Close();
             }
-            catch { }
-
-            if (System == null)
-                return;
-
-            System.OnSystemInvalidatedAction -= OnSystemInvalidated;
-
-            if (!MyAPIGateway.Utilities.IsDedicated)
-            {
-                if (Block != null)
-                    Block.AppendingCustomInfo -= Block_AppendingCustomInfo;
-
-                System.StopBlinkParticleEffect();
-            }
-
-            if (Block != null && Block.CubeGrid != null && System.GridsMass.ContainsKey(Block.CubeGrid.EntityId))
-                System.GridsMass.Remove(Block.CubeGrid.EntityId);
         }
 
         private void InitPowerSystem()
         {
-            MyResourceSinkComponent powerSystem = new MyResourceSinkComponent();
+            Settings settings = Settings.GetShared();
 
-            switch (Block.BlockDefinition.SubtypeId)
-            {
-                // Vanilla >> regular power and size
-                case "FSDriveSmall":
-                case "FSDriveSmall_A":
-                    powerMultiplier = 1f;
-                    powerSystem.Init(MyStringHash.GetOrCompute("Utility"),
-                        (float)(Settings.baseRequiredPowerSmall * Settings.powerRequirementMultiplier * powerMultiplier),
-                        ComputeRequiredPower, (MyCubeBlock)Entity);               
-                    break;
+            powerMultiplier = WarpSystem.IsPrototech(this) ? 0.5f : 1f;
 
-                case "FSDriveLarge":
-                case "FSDriveLarge_A":
-                case "FSDriveLargeReskin":
-                case "FSDriveLargeReskin_A":
-                case "FSDriveLargerReskin":
-                case "FSDriveLargerReskin_A":
-                    powerMultiplier = 1f;
-                    powerSystem.Init(MyStringHash.GetOrCompute("Utility"),
-                        (float)(Settings.baseRequiredPower * Settings.powerRequirementMultiplier * powerMultiplier),
-                        ComputeRequiredPower, (MyCubeBlock)Entity);               
-                    break;
+            sink = new MyResourceSinkComponent();
+            sink.Init(MyStringHash.GetOrCompute("Utility"),
+                (float)((WarpSystem.IsSmallDrive(this) ? settings.baseRequiredPowerSmall : settings.baseRequiredPower) * settings.powerRequirementMultiplier * powerMultiplier),
+                ComputeRequiredPower, (MyCubeBlock)Entity);
 
-                // Prototech >> ultra op, yet costs a lot
-                case "PrototechFSDriveSmall":
-                case "PrototechFSDriveSmall_S":
-                    powerMultiplier = 0.5f;
-                    powerSystem.Init(MyStringHash.GetOrCompute("Utility"),
-                        (float)(Settings.baseRequiredPowerSmall * Settings.powerRequirementMultiplier * powerMultiplier),
-                        ComputeRequiredPower, (MyCubeBlock)Entity);
-                    break;
-
-                case "PrototechFSDriveLarge":
-                case "PrototechFSDriveLarge_S":
-                case "PrototechFSDriveLarge_9S":
-                    powerMultiplier = 0.5f;
-                    powerSystem.Init(MyStringHash.GetOrCompute("Utility"),
-                        (float)(Settings.baseRequiredPower * Settings.powerRequirementMultiplier * powerMultiplier),
-                        ComputeRequiredPower, (MyCubeBlock)Entity);
-                    break;
-
-                default:
-                    // No drive found - deactivated
-                    break;
-            }
-
-            Entity.Components.Add(powerSystem);
-            sink = powerSystem;
+            Entity.Components.Add(sink);
             sink.Update();
         }
 
         private float ComputeRequiredPower()
         {
-            if (System == null || System.WarpState == WarpSystem.State.Idle)
-                RequiredPower = 0;
+            if (warpSystem == null || warpSystem.warpState == WarpSystem.State.idle)
+                requiredPower = 0;
 
-            return RequiredPower;
+            return requiredPower;
         }
 
-        public void PlayerLeftCockpit(string entityName, long playerId, string gridName)
+        public static IMyEntity ProximityDanger(MatrixD gridMatrix, GridSystem gridSystem, double gridSpeed, bool spooling = false)
         {
-            if (Block == null || System == null)
-                return;
+            IMyCubeGrid mainGrid = gridSystem?.mainGrid;
+            if (mainGrid == null || (spooling && mainGrid.Physics == null))
+                return null;
 
-            WarpDrive drive = Block?.GameLogic?.GetAs<WarpDrive>();
-            if (drive == null)
-                return;
-
-            var hs = drive.Hyperspace;
-            bool isHyperspaceActive = hs != null && hs.State != HyperspaceSystem.HyperState.Idle;
-            bool isWarpActive = drive.System.WarpState != WarpSystem.State.Idle;
-
-            if (!isWarpActive && !isHyperspaceActive)
-                return;
-
-            if (entityName != "")
+            MatrixD toMainGrid = mainGrid.WorldMatrixNormalizedInv;
+            BoundingBoxD shipBox = BoundingBoxD.CreateInvalid();
+            foreach (IMyCubeGrid connectedGrid in gridSystem.gridGroup)
             {
-                long temp_id;
-                if (long.TryParse(entityName, out temp_id))
-                {
-                    var dump_cockpit = MyAPIGateway.Entities.GetEntityById(temp_id) as IMyShipController;
-                    var CockpitGrid = dump_cockpit?.CubeGrid as MyCubeGrid;
-                    HashSet<IMyShipController> FoundCockpits = new HashSet<IMyShipController>();
-
-                    if (CockpitGrid == null)
-                        return;
-
-                    if ((bool)(drive.System.grid?.cockpits?.TryGetValue(CockpitGrid, out FoundCockpits)))
-                    {
-                        if (FoundCockpits.Count > 0 && FoundCockpits.Contains(dump_cockpit))
-                        {
-                            // If Hyperspace is active, abort or emergency drop
-                            if (isHyperspaceActive)
-                            {
-                                if (hs.State == HyperspaceSystem.HyperState.Active)
-                                {
-                                    hs.ExitHyperspace();
-                                    drive.System.SendMessage("EMERGENCY DROP - SEAT VACATED", 5f, "Red");
-                                }
-                                else if (hs.State == HyperspaceSystem.HyperState.Charging || hs.State == HyperspaceSystem.HyperState.HoldingCharge || hs.State == HyperspaceSystem.HyperState.Countdown)
-                                {
-                                    hs.AbortJump("JUMP ABORTED - CREW LEFT SEAT");
-                                }
-                            }
-
-                            if (isWarpActive)
-                            {
-                                if (dump_cockpit.CubeGrid.EntityId != drive.Block.CubeGrid.EntityId)
-                                    return;
-
-                                drive.System.SafeTriggerON = true;
-
-                                if (MyAPIGateway.Utilities.IsDedicated || MyAPIGateway.Multiplayer.IsServer)
-                                {
-                                    drive.System.currentSpeedPt = -1f;
-                                    dump_cockpit.CubeGrid?.Physics?.ClearSpeed();
-
-                                    drive.System.Dewarp(true);
-                                    Block.Enabled = false;
-                                    BlockWasON = true;
-                                }
-
-                                drive.System.SafeTriggerON = false;
-                            }
-                        }
-                    }
-                }
+                BoundingBox gridBox = connectedGrid.LocalAABB;
+                shipBox = BoundingBoxD.CreateMerged(shipBox, new BoundingBoxD(gridBox.Min, gridBox.Max).TransformFast(connectedGrid.WorldMatrix * toMainGrid));
             }
+
+            Vector3D center = Vector3D.Transform(shipBox.Center, mainGrid.WorldMatrix);
+            Vector3D forward = gridMatrix.Forward;
+
+            Vector3D shipSize = shipBox.Size;
+            double alongX = Math.Abs(Vector3D.Dot(mainGrid.WorldMatrix.Right, forward));
+            double alongY = Math.Abs(Vector3D.Dot(mainGrid.WorldMatrix.Up, forward));
+            double alongZ = Math.Abs(Vector3D.Dot(mainGrid.WorldMatrix.Forward, forward));
+
+            double shipLength, pathRadius;
+            if (alongX >= alongY && alongX >= alongZ)
+            {
+                shipLength = shipSize.X;
+                pathRadius = Math.Max(shipSize.Y, shipSize.Z) / 2;
+            }
+            else if (alongY >= alongZ)
+            {
+                shipLength = shipSize.Y;
+                pathRadius = Math.Max(shipSize.X, shipSize.Z) / 2;
+            }
+            else
+            {
+                shipLength = shipSize.Z;
+                pathRadius = Math.Max(shipSize.X, shipSize.Y) / 2;
+            }
+
+            LineD path = new LineD(center - forward * (shipLength / 2 - pathRadius), center + forward * (shipLength / 2 + 500.0));
+
+            var sphere = new BoundingSphereD((path.From + path.To) / 2, path.Length / 2 + pathRadius);
+            List<IMyEntity> entList = MyAPIGateway.Entities.GetTopMostEntitiesInSphere(ref sphere);
+
+            if (entList == null || entList.Count == 0)
+                return null;
+
+            var attachedList = new List<IMyCubeGrid>();
+
+            //gets subgrids and locked landing gear to ignore
+            MyAPIGateway.GridGroups.GetGroup(mainGrid, GridLinkTypeEnum.Physical, attachedList);
+
+            foreach (var ent in entList)
+            {
+                var character = ent as IMyCharacter;
+                if (character != null)
+                {
+                    if (spooling || character.IsDead)
+                        continue;
+                }
+                else if (!(ent is MySafeZone) || Settings.instance.AllowInSafeZone)
+                {
+                if (!(ent is MyCubeGrid || ent is MyVoxelMap))
+                    continue;
+
+                //asteroids ignored over 20km/s
+                if (!spooling && ent is MyVoxelMap && gridSpeed >= 333.333)
+                    continue;
+
+                if (attachedList.Contains(ent as IMyCubeGrid))
+                    continue;
+                }
+
+                MatrixD toLocal = ent.WorldMatrixNormalizedInv;
+                LineD localPath = new LineD(Vector3D.Transform(path.From, toLocal), Vector3D.Transform(path.To, toLocal));
+                BoundingBoxD obstacleBox = new BoundingBoxD(ent.LocalAABB.Min - new Vector3D(pathRadius), ent.LocalAABB.Max + new Vector3D(pathRadius));
+                double hitDistance;
+
+                if (obstacleBox.Intersects(ref localPath, out hitDistance))
+                    return ent;
+            }
+
+            return null;
+        }
+
+        public static bool EnemyProximityCharge(IMyCubeGrid warpGrid)
+        {
+            if (warpGrid == null || warpGrid.Physics == null || Settings.instance == null)
+                return false;
+
+            long warpGridOwner = (warpGrid.BigOwners != null && warpGrid.BigOwners.Count > 0) ? warpGrid.BigOwners[0] : 0L;
+            if (warpGridOwner == 0L)
+                return false;
+
+            var warpGridFaction = MyAPIGateway.Session.Factions.TryGetPlayerFaction(warpGridOwner);
+            if (warpGridFaction == null)
+                return false;
+
+            var sphere = new BoundingSphereD(warpGrid.PositionComp.GetPosition(), Settings.instance.DetectEnemyGridInRange);
+            var entList = MyAPIGateway.Entities.GetTopMostEntitiesInSphere(ref sphere);
+
+            if (entList == null || entList.Count == 0)
+                return false;
+
+            var attachedList = new List<IMyCubeGrid>();
+
+            MyAPIGateway.GridGroups.GetGroup(warpGrid, GridLinkTypeEnum.Physical, attachedList);
+
+            foreach (var ent in entList)
+            {
+                var foundGrid = ent as MyCubeGrid;
+                if (foundGrid == null || attachedList.Contains(foundGrid))
+                    continue;
+
+                long foundGridOwner = (foundGrid.BigOwners != null && foundGrid.BigOwners.Count > 0) ? foundGrid.BigOwners[0] : 0L;
+                if (foundGridOwner == 0L || foundGridOwner == warpGridOwner)
+                    continue;
+
+                var foundGridFaction = MyAPIGateway.Session.Factions.TryGetPlayerFaction(foundGridOwner);
+                if (foundGridFaction == null || foundGridFaction.FactionId == warpGridFaction.FactionId)
+                    continue;
+
+                if (MyAPIGateway.Session.Factions.GetRelationBetweenFactions(foundGridFaction.FactionId, warpGridFaction.FactionId) == MyRelationsBetweenFactions.Enemies && GridPowered(foundGrid))
+                    return true;
+            }
+
+            return false;
         }
 
         public static bool IsGridIgnored(IMyCubeGrid candidateGrid, IMyCubeGrid myGrid, long myFleetLeader)
@@ -436,284 +392,16 @@ namespace WarpDriveMod
             return false;
         }
 
-        public bool ProxymityDangerInWarp(MatrixD gridMatrix, MyCubeGrid MainGrid, double GridSpeed)
+        private static bool GridPowered(MyCubeGrid grid)
         {
-            if (MainGrid == null || MainGrid.Physics == null)
+            if (grid == null)
                 return false;
 
-            Vector3D forward = gridMatrix.Forward;
-            Vector3D gridCenter = MainGrid.PositionComp.WorldAABB.Center;
-
-            // Compute the ship's forward extent (front nose offset) and cross-sectional radius
-            BoundingBoxD localAABB = MainGrid.PositionComp.LocalAABB;
-            MyOrientedBoundingBoxD shipOBB = new MyOrientedBoundingBoxD(localAABB, MainGrid.WorldMatrix);
-            Vector3D[] corners = new Vector3D[8];
-            shipOBB.GetCorners(corners, 0);
-
-            double maxForwardDist = 0.0;
-            double maxPerpDist = (MainGrid.GridSizeEnum == MyCubeSize.Small) ? 2.5 : 5.0;
-
-            for (int i = 0; i < 8; i++)
+            foreach (MyCubeBlock enemyBlock in grid.GetFatBlocks())
             {
-                Vector3D offset = corners[i] - gridCenter;
-                double fwdProj = Vector3D.Dot(offset, forward);
-                if (fwdProj > maxForwardDist)
-                    maxForwardDist = fwdProj;
-
-                Vector3D perpOffset = offset - (forward * fwdProj);
-                double perpDist = perpOffset.Length();
-                if (perpDist > maxPerpDist)
-                    maxPerpDist = perpDist;
-            }
-
-            double corridorRadius = maxPerpDist + 2.0;
-            double corridorLength = (MainGrid.GridSizeEnum == MyCubeSize.Small) ? 400.0 : 500.0;
-
-            // Start strictly outside the ship's nose to prevent self-collision
-            Vector3D startPos = gridCenter + (forward * (maxForwardDist + 5.0));
-            Vector3D endPos = startPos + (forward * corridorLength);
-            RayD flightRay = new RayD(startPos, forward);
-
-            double scanRadius = Math.Max(corridorLength * 0.55, 1500.0);
-            BoundingSphereD querySphere = new BoundingSphereD(startPos + (forward * (corridorLength * 0.5)), scanRadius);
-            var entList = MyAPIGateway.Entities.GetTopMostEntitiesInSphere(ref querySphere);
-            if (entList == null || entList.Count == 0)
-                return false;
-
-            long myGridId = MainGrid.EntityId;
-            long myFleetLeader = FleetJumpSystem.GetLeaderIdForGrid(myGridId);
-
-            foreach (var ent in entList)
-            {
-                if (ent == null || ent.MarkedForClose) continue;
-
-                if (ent is MySafeZone)
-                {
-                    var sz = ent as MySafeZone;
-                    if (sz != null)
-                    {
-                        var szSphere = new BoundingSphereD(sz.PositionComp.GetPosition(), sz.Radius + corridorRadius);
-                        double? hit = szSphere.Intersects(flightRay);
-                        if (hit.HasValue && hit.Value >= 0 && hit.Value <= corridorLength)
-                            return true;
-                    }
-                    continue;
-                }
-
-                var foundGrid = ent as IMyCubeGrid;
-                if (foundGrid != null)
-                {
-                    if (IsGridIgnored(foundGrid, MainGrid, myFleetLeader))
-                        continue;
-
-                    // 3D Capsule-to-Box Corridor Check
-                    BoundingSphereD obstacleSphere = foundGrid.PositionComp.WorldVolume;
-                    Vector3D seg = endPos - startPos;
-                    double segLenSq = seg.LengthSquared();
-                    double t = (segLenSq > 1e-6) ? MathHelper.Clamp(Vector3D.Dot(obstacleSphere.Center - startPos, seg) / segLenSq, 0.0, 1.0) : 0.0;
-                    Vector3D closestPt = startPos + (seg * t);
-                    double maxDist = obstacleSphere.Radius + corridorRadius;
-                    if (Vector3D.DistanceSquared(obstacleSphere.Center, closestPt) <= maxDist * maxDist)
-                    {
-                        Vector3D localPt = Vector3D.Transform(closestPt, foundGrid.PositionComp.WorldMatrixInvScaled);
-                        double localDistSq = ((BoundingBoxD)foundGrid.PositionComp.LocalAABB).DistanceSquared(localPt);
-                        if (localDistSq <= corridorRadius * corridorRadius)
-                            return true;
-                    }
-                }
-                else if (ent is MyVoxelBase)
-                {
-                    // Don't drop if grid speed is 20 (333.33 km/s) or above
-                    if (GridSpeed >= 333.333)
-                        continue;
-
-                    var voxel = ent as MyVoxelBase;
-                    if (voxel == null) continue;
-
-                    // Ignore planets and planet terrain physics chunks
-                    if (voxel is MyPlanet || (voxel as MyVoxelBase)?.RootVoxel is MyPlanet)
-                        continue;
-
-                    double asteroidScanDist = Math.Max(corridorLength, 2500.0);
-                    BoundingBoxD asteroidCorridorBox = new BoundingBoxD(
-                        Vector3D.Min(startPos, startPos + forward * asteroidScanDist) - new Vector3D(corridorRadius),
-                        Vector3D.Max(startPos, startPos + forward * asteroidScanDist) + new Vector3D(corridorRadius)
-                    );
-
-                    if (voxel.PositionComp.WorldAABB.Intersects(asteroidCorridorBox))
-                    {
-                        if (voxel.GetIntersectionWithAABB(ref asteroidCorridorBox))
-                            return true;
-                    }
-                }
-            }
-            return false;
-        }
-
-        public bool ProxymityDangerCharge(MatrixD gridMatrix, IMyCubeGrid WarpGrid)
-        {
-            if (WarpGrid == null || WarpGrid.Physics == null)
-                return false;
-
-            Vector3D forward = gridMatrix.Forward;
-            Vector3D gridCenter = WarpGrid.PositionComp.WorldAABB.Center;
-
-            // Compute the ship's forward extent (front nose offset) and cross-sectional radius
-            BoundingBoxD localAABB = WarpGrid.PositionComp.LocalAABB;
-            MyOrientedBoundingBoxD shipOBB = new MyOrientedBoundingBoxD(localAABB, WarpGrid.WorldMatrix);
-            Vector3D[] corners = new Vector3D[8];
-            shipOBB.GetCorners(corners, 0);
-
-            double maxForwardDist = 0.0;
-            double maxPerpDist = (WarpGrid.GridSizeEnum == MyCubeSize.Small) ? 2.5 : 5.0;
-
-            for (int i = 0; i < 8; i++)
-            {
-                Vector3D offset = corners[i] - gridCenter;
-                double fwdProj = Vector3D.Dot(offset, forward);
-                if (fwdProj > maxForwardDist)
-                    maxForwardDist = fwdProj;
-
-                Vector3D perpOffset = offset - (forward * fwdProj);
-                double perpDist = perpOffset.Length();
-                if (perpDist > maxPerpDist)
-                    maxPerpDist = perpDist;
-            }
-
-            double corridorRadius = maxPerpDist + 2.0;
-            double corridorLength = (WarpGrid.GridSizeEnum == MyCubeSize.Small) ? 400.0 : 500.0;
-
-            // Start strictly outside the ship's nose to prevent self-collision
-            Vector3D startPos = gridCenter + (forward * (maxForwardDist + 5.0));
-            Vector3D endPos = startPos + (forward * corridorLength);
-            RayD flightRay = new RayD(startPos, forward);
-
-            double scanRadius = Math.Max(corridorLength * 0.55, 1500.0);
-            BoundingSphereD querySphere = new BoundingSphereD(startPos + (forward * (corridorLength * 0.5)), scanRadius);
-            var entList = MyAPIGateway.Entities.GetTopMostEntitiesInSphere(ref querySphere);
-            if (entList == null || entList.Count == 0)
-                return false;
-
-            long myGridId = WarpGrid.EntityId;
-            long myFleetLeader = FleetJumpSystem.GetLeaderIdForGrid(myGridId);
-
-            foreach (var ent in entList)
-            {
-                if (ent == null || ent.MarkedForClose) continue;
-
-                if (ent is MySafeZone)
-                {
-                    var sz = ent as MySafeZone;
-                    if (sz != null)
-                    {
-                        var szSphere = new BoundingSphereD(sz.PositionComp.GetPosition(), sz.Radius + corridorRadius);
-                        double? hit = szSphere.Intersects(flightRay);
-                        if (hit.HasValue && hit.Value >= 0 && hit.Value <= corridorLength)
-                        {
-                            MyAPIGateway.Utilities.ShowNotification("Can't Start FSD - SafeZone in flight path!", 4000, "Red");
-                            return true;
-                        }
-                    }
-                    continue;
-                }
-
-                var foundGrid = ent as IMyCubeGrid;
-                if (foundGrid != null)
-                {
-                    if (IsGridIgnored(foundGrid, WarpGrid, myFleetLeader))
-                        continue;
-
-                    // 3D Capsule-to-Box Corridor Check
-                    BoundingSphereD obstacleSphere = foundGrid.PositionComp.WorldVolume;
-                    Vector3D seg = endPos - startPos;
-                    double segLenSq = seg.LengthSquared();
-                    double t = (segLenSq > 1e-6) ? MathHelper.Clamp(Vector3D.Dot(obstacleSphere.Center - startPos, seg) / segLenSq, 0.0, 1.0) : 0.0;
-                    Vector3D closestPt = startPos + (seg * t);
-                    double maxDist = obstacleSphere.Radius + corridorRadius;
-                    if (Vector3D.DistanceSquared(obstacleSphere.Center, closestPt) <= maxDist * maxDist)
-                    {
-                        Vector3D localPt = Vector3D.Transform(closestPt, foundGrid.PositionComp.WorldMatrixInvScaled);
-                        double localDistSq = ((BoundingBoxD)foundGrid.PositionComp.LocalAABB).DistanceSquared(localPt);
-                        if (localDistSq <= corridorRadius * corridorRadius)
-                        {
-                            string gridName = !string.IsNullOrWhiteSpace(foundGrid.DisplayName) ? foundGrid.DisplayName :
-                                              (!string.IsNullOrWhiteSpace(foundGrid.CustomName) ? foundGrid.CustomName : "Ship/Station");
-                            MyAPIGateway.Utilities.ShowNotification($"Can't Start FSD - Obstacle ahead: {gridName}", 4000, "Red");
-                            return true;
-                        }
-                    }
-                }
-                else if (ent is MyVoxelBase)
-                {
-                    var voxel = ent as MyVoxelBase;
-                    if (voxel == null) continue;
-
-                    // Ignore planets and planet terrain physics chunks
-                    if (voxel is MyPlanet || (voxel as MyVoxelBase)?.RootVoxel is MyPlanet)
-                        continue;
-
-                    // Asteroids: check actual voxel geometry inside the flight corridor (up to 2.5km)
-                    double asteroidScanDist = Math.Max(corridorLength, 2500.0);
-                    BoundingBoxD asteroidCorridorBox = new BoundingBoxD(
-                        Vector3D.Min(startPos, startPos + forward * asteroidScanDist) - new Vector3D(corridorRadius),
-                        Vector3D.Max(startPos, startPos + forward * asteroidScanDist) + new Vector3D(corridorRadius)
-                    );
-
-                    if (voxel.PositionComp.WorldAABB.Intersects(asteroidCorridorBox))
-                    {
-                        if (voxel.GetIntersectionWithAABB(ref asteroidCorridorBox))
-                        {
-                            MyAPIGateway.Utilities.ShowNotification("Can't Start FSD - Asteroid in flight path!", 4000, "Red");
-                            return true;
-                        }
-                    }
-                }
-            }
-
-            return false;
-        }
-
-        public bool EnemyProxymityDangerCharge(IMyCubeGrid WarpGrid)
-        {
-            if (WarpGrid == null || WarpGrid.Physics == null)
-                return false;
-
-            var Gridlocation = WarpGrid.PositionComp.GetPosition();
-            var sphere = new BoundingSphereD(Gridlocation, Settings.DetectEnemyGridInRange);
-            var entList = MyAPIGateway.Entities.GetTopMostEntitiesInSphere(ref sphere);
-
-            if (entList == null || entList.Count == 0)
-                return false;
-
-            var WarpGridOwner = WarpGrid.BigOwners.FirstOrDefault();
-            var WarpGridFaction = MyAPIGateway.Session.Factions.TryGetPlayerFaction(WarpGridOwner);
-            long myFleetLeader = FleetJumpSystem.GetLeaderIdForGrid(WarpGrid.EntityId);
-
-            foreach (var ent in entList)
-            {
-                var FoundGrid = ent as IMyCubeGrid;
-                if (FoundGrid == null || IsGridIgnored(FoundGrid, WarpGrid, myFleetLeader))
-                    continue;
-
-                if (FoundGrid.BigOwners != null && FoundGrid.BigOwners.Count > 0 && FoundGrid.BigOwners.FirstOrDefault() != 0L)
-                {
-                    var FoundGridOwner = FoundGrid.BigOwners.FirstOrDefault();
-
-                    if (FoundGridOwner == WarpGridOwner)
-                        continue;
-
-                    var FoundGridFaction = MyAPIGateway.Session.Factions.TryGetPlayerFaction(FoundGridOwner);
-
-                    if (WarpGridFaction != null && FoundGridFaction != null)
-                    {
-                        if (FoundGridFaction.FactionId == WarpGridFaction.FactionId)
-                            continue;
-
-                        var FactionsRelationship = MyAPIGateway.Session.Factions.GetRelationBetweenFactions(FoundGridFaction.FactionId, WarpGridFaction.FactionId);
-                        if (FactionsRelationship == MyRelationsBetweenFactions.Enemies)
-                            return true;
-                    }
-                }
+                var producer = enemyBlock as Sandbox.ModAPI.Ingame.IMyPowerProducer;
+                if (producer != null && producer.IsWorking)
+                    return true;
             }
 
             return false;
@@ -721,28 +409,40 @@ namespace WarpDriveMod
 
         private void OnSystemInvalidated(WarpSystem system)
         {
-            if (Block.MarkedForClose || Block.CubeGrid.MarkedForClose)
+            if (block.MarkedForClose || block.CubeGrid.MarkedForClose)
                 return;
 
-            WarpDriveSession.Instance.DelayedGetWarpSystem(this);
+            NeedsUpdate |= MyEntityUpdateEnum.BEFORE_NEXT_FRAME;
+        }
+
+        public override void UpdateOnceBeforeFrame()
+        {
+            if (WarpDriveSession.instance != null)
+                SetWarpSystem(WarpDriveSession.instance.GetWarpSystem(this));
         }
 
         public void SetWarpSystem(WarpSystem system)
         {
-            System = system;
-            System.OnSystemInvalidatedAction += OnSystemInvalidated;
+            if (system == null || ReferenceEquals(warpSystem, system))
+                return;
+
+            if (warpSystem != null)
+                warpSystem.OnSystemInvalidatedAction -= OnSystemInvalidated;
+
+            warpSystem = system;
+            warpSystem.OnSystemInvalidatedAction += OnSystemInvalidated;
         }
 
         public override bool Equals(object obj)
         {
             var drive = obj as WarpDrive;
 
-            return drive != null && EqualityComparer<IMyFunctionalBlock>.Default.Equals(Block, drive.Block);
+            return drive != null && EqualityComparer<IMyFunctionalBlock>.Default.Equals(block, drive.block);
         }
 
         public override int GetHashCode()
         {
-            return 957606482 + EqualityComparer<IMyFunctionalBlock>.Default.GetHashCode(Block);
+            return 957606482 + EqualityComparer<IMyFunctionalBlock>.Default.GetHashCode(block);
         }
     }
 }

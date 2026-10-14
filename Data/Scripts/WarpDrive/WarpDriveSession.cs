@@ -1,4 +1,5 @@
 using VRage.Game.Components;
+using Sandbox.Common.ObjectBuilders.Definitions;
 using Sandbox.ModAPI;
 using System.Text;
 using Sandbox.ModAPI.Interfaces.Terminal;
@@ -9,117 +10,135 @@ using VRage.Game;
 using Sandbox.Game.Entities;
 using VRage.Utils;
 using Sandbox.Game;
-using Sandbox.Game.Screens.Terminal.Controls;
 using Sandbox.Game.EntityComponents;
 using VRage.ModAPI;
 using VRage.Game.Entity;
 using ProtoBuf;
-using VRageMath;
 
 namespace WarpDriveMod
 {
-    public static class WarpConstants
+    public static class WarpSound
     {
-        public static MySoundPair Hyperspace_jump = new MySoundPair("Hyperspace_jump", true);
-        public static MySoundPair fsd_hyper_charge = new MySoundPair("fsd_hyper_charge", true);
-        public static MySoundPair engaging_hyperspace = new MySoundPair("engaging_hyperspace", true);
+        public static MySoundPair cruiseSpoolSound = new MySoundPair("quantum_charging", true);
+        public static MySoundPair cruiseStartSound = new MySoundPair("quantum_jumpin", true);
+        public static MySoundPair cruiseEndSound = new MySoundPair("quantum_jumpout", true);
+        public static MySoundPair cruiseOperatingSound = new MySoundPair("FSD_CruiseLoop", true); //placeholder audioID
+        public static MySoundPair cruiseSpoolSoundProto = new MySoundPair("FSD_ProtoCharging", true);
+        public static MySoundPair cruiseStartSoundProto = new MySoundPair("FSD_Proto_JumpIn", true);
+        public static MySoundPair cruiseEndSoundProto = new MySoundPair("FSD_Proto_JumpOut", true);
+        public static MySoundPair gravityGlideOn = new MySoundPair("glide_on", true);
+        public static MySoundPair gravityGlideOff = new MySoundPair("glide_off", true);
+        public static MySoundPair hyperspaceJump = new MySoundPair("Hyperspace_jump", true);
+        public static MySoundPair fsdHyperCharge = new MySoundPair("fsd_hyper_charge", true);
+        public static MySoundPair engagingHyperspace = new MySoundPair("engaging_hyperspace", true);
         public static MySoundPair hyperdiction = new MySoundPair("hyperdiction", true);
-        public static MySoundPair inHyperSpace = new MySoundPair("inHyperSpace", true);
+        public static MySoundPair inHyperspace = new MySoundPair("inHyperSpace", true);
         public static MySoundPair holdCharge = new MySoundPair("hold_charge", true);
         public static MySoundPair spoolDown = new MySoundPair("spool_down", true);
-        public static MySoundPair EmergencyDropSound = new MySoundPair("SuperCruiseGravity", true);
-        public static MySoundPair chargingSound = new MySoundPair("quantum_charging", true);
+        public static MySoundPair emergencyDropSound = new MySoundPair("SuperCruiseGravity", true);
         public static MySoundPair jumpInSound = new MySoundPair("quantum_jumpin", true);
         public static MySoundPair jumpOutSound = new MySoundPair("quantum_jumpout", true);
-        public static MySoundPair PrototechChargingSound = new MySoundPair("FSD_ProtoCharging", true);
-        public static MySoundPair PrototechJumpInSound = new MySoundPair("FSD_Proto_JumpIn", true);
-        public static MySoundPair PrototechJumpOutSound = new MySoundPair("FSD_Proto_JumpOut", true);
-
-        public const int groupSystemDelay = 1;
-
-        public static MyDefinitionId ElectricityId = MyResourceDistributorComponent.ElectricityId;
     }
 
     [ProtoContract]
     public class ItemsMessage
     {
         [ProtoMember(1)]
-        public long EntityId { get; set; }
+        public long entityId { get; set; }
         [ProtoMember(2)]
-        public long SendingPlayerID { get; set; }
-    }
-
-    [ProtoContract]
-    public class HyperspaceMessage
-    {
-        [ProtoMember(1)]
-        public long EntityId { get; set; }
-        [ProtoMember(2)]
-        public long SendingPlayerID { get; set; }
-        [ProtoMember(3)]
-        public int Mode { get; set; }
-        [ProtoMember(4)]
-        public float JumpDistanceRatio { get; set; }
-        [ProtoMember(5)]
-        public bool HasGpsCoords { get; set; }
-        [ProtoMember(6)]
-        public Vector3D GpsCoords { get; set; }
-        [ProtoMember(7)]
-        public string GpsName { get; set; }
-    }
-
-    [ProtoContract]
-    public class HyperspaceFXMessage
-    {
-        [ProtoMember(1)]
-        public Vector3D Position { get; set; }
-        [ProtoMember(2)]
-        public Vector3D Direction { get; set; }
-        [ProtoMember(3)]
-        public float Scale { get; set; }
-        [ProtoMember(4)]
-        public bool IsArrival { get; set; }
-        [ProtoMember(5)]
-        public bool IsPrototech { get; set; }
-        [ProtoMember(6)]
-        public float Speed { get; set; }
-        [ProtoMember(7)]
-        public bool IsArrivalLead { get; set; }
+        public long sendingPlayerID { get; set; }
     }
 
     [ProtoContract]
     public class SpeedMessage
     {
         [ProtoMember(1)]
-        public long EntityId { get; set; }
+        public long entityId { get; set; }
         [ProtoMember(2)]
-        public double WarpSpeed { get; set; }
+        public double warpSpeed { get; set; }
+    }
+
+    [ProtoContract]
+    public class WarpStateMessage
+    {
+        [ProtoMember(1)]
+        public long entityId { get; set; }
+        [ProtoMember(2)]
+        public int state { get; set; }
+        [ProtoMember(3)]
+        public double speed { get; set; }
+        [ProtoMember(4)]
+        public int spoolTicksRemaining { get; set; }
+        [ProtoMember(5)]
+        public bool enemyDelay { get; set; }
+        [ProtoMember(6)]
+        public bool clearSpeed { get; set; }
+        [ProtoMember(7)]
+        public long cockpitId { get; set; }
+    }
+
+    [ProtoContract]
+    public class HyperspaceMessage
+    {
+        [ProtoMember(1)]
+        public long entityId { get; set; }
+        [ProtoMember(2)]
+        public long sendingPlayerID { get; set; }
+        [ProtoMember(3)]
+        public int mode { get; set; }
+        [ProtoMember(4)]
+        public float jumpDistanceRatio { get; set; }
+        [ProtoMember(5)]
+        public bool hasGpsCoords { get; set; }
+        [ProtoMember(6)]
+        public VRageMath.Vector3D gpsCoords { get; set; }
+        [ProtoMember(7)]
+        public string gpsName { get; set; }
+    }
+
+    [ProtoContract]
+    public class HyperspaceFXMessage
+    {
+        [ProtoMember(1)]
+        public VRageMath.Vector3D position { get; set; }
+        [ProtoMember(2)]
+        public VRageMath.Vector3D direction { get; set; }
+        [ProtoMember(3)]
+        public float scale { get; set; }
+        [ProtoMember(4)]
+        public bool isArrival { get; set; }
+        [ProtoMember(5)]
+        public bool isPrototech { get; set; }
+        [ProtoMember(6)]
+        public float speed { get; set; }
+        [ProtoMember(7)]
+        public bool isArrivalLead { get; set; }
     }
 
     [MySessionComponentDescriptor(MyUpdateOrder.Simulation)]
     public class WarpDriveSession : MySessionComponentBase
     {
-        public static WarpDriveSession Instance;
-        public Random Rand { get; private set; } = new Random();
-        public long Runtime { get; private set; } = 0;
-        public Dictionary<IMyFunctionalBlock, double> warpDrivesSpeeds = new Dictionary<IMyFunctionalBlock, double>();
+        public static WarpDriveSession instance;
+        public Random rand { get; private set; } = new Random();
+        public long runtime { get; private set; } = 0;
 
         private readonly List<WarpSystem> warpSystems = new List<WarpSystem>();
         private readonly List<WarpSystem> newSystems = new List<WarpSystem>();
-        private readonly List<WarpDrive> requireSystem = new List<WarpDrive>();
+        private readonly Queue<HeatSink> exposureQueue = new Queue<HeatSink>();
+        private readonly List<IMyPlayer> playerList = new List<IMyPlayer>();
+        private bool _controlInit = false;
+        public const ushort warpTogglePacket = 4374;
+        public const ushort warpSpeedPacket = 4378;
+        public const ushort warpConfigPacket = 4389;
+        public const ushort warpStatePacket = 4375;
+        public const ushort hyperspaceTogglePacket = 4390;
+        public const ushort hyperspaceFXPacket = 4391;
+        public const ushort fleetJumpPacket = 4392;
+
         private readonly HashSet<HyperspaceSystem> hyperspaceSystems = new HashSet<HyperspaceSystem>();
+        private readonly HashSet<CapitalFSD> capitalFSDSystems = new HashSet<CapitalFSD>();
         private readonly List<HyperspaceSystem> tempHyperspaceList = new List<HyperspaceSystem>();
         private readonly List<CapitalFSD> tempCapitalFSDList = new List<CapitalFSD>();
-        private bool isHost;
-        private bool isPlayer;
-        private bool _controlInit = false;
-        public const ushort toggleWarpPacketId = 4374;
-        public const ushort toggleWarpPacketIdSpeed = 4378;
-        public const ushort WarpConfigPacketId = 4389;
-        public const ushort toggleHyperspacePacketId = 4390;
-        public const ushort hyperspaceFXPacketId = 4391;
-        public const ushort fleetJumpPacketId = 4392;
-        private Action<IMyTerminalBlock> toggle;
 
         public void RegisterHyperspace(HyperspaceSystem hs)
         {
@@ -132,8 +151,6 @@ namespace WarpDriveMod
             if (hs != null)
                 hyperspaceSystems.Remove(hs);
         }
-
-        private readonly HashSet<CapitalFSD> capitalFSDSystems = new HashSet<CapitalFSD>();
 
         public void RegisterCapitalFSD(CapitalFSD hs)
         {
@@ -152,12 +169,12 @@ namespace WarpDriveMod
             if (grid == null) return false;
             foreach (var hs in hyperspaceSystems)
             {
-                if (hs.GridSystem?.MainGrid == grid && hs.State != HyperspaceSystem.HyperState.Idle)
+                if (hs.gridSystem?.mainGrid == grid && hs.state != HyperspaceSystem.HyperState.idle)
                     return true;
             }
             foreach (var hs in capitalFSDSystems)
             {
-                if (hs.GridSystem?.MainGrid == grid && hs.State != CapitalFSD.CapState.Idle)
+                if (hs.gridSystem?.mainGrid == grid && hs.state != CapitalFSD.CapState.idle)
                     return true;
             }
             return false;
@@ -168,12 +185,12 @@ namespace WarpDriveMod
             if (grid == null) return false;
             foreach (var hs in hyperspaceSystems)
             {
-                if (hs.GridSystem?.MainGrid == grid && hs.State == HyperspaceSystem.HyperState.Active)
+                if (hs.gridSystem?.mainGrid == grid && hs.state == HyperspaceSystem.HyperState.active)
                     return true;
             }
             foreach (var hs in capitalFSDSystems)
             {
-                if (hs.GridSystem?.MainGrid == grid && (hs.State == CapitalFSD.CapState.Transit || hs.State == CapitalFSD.CapState.JumpIn || hs.State == CapitalFSD.CapState.JumpOut))
+                if (hs.gridSystem?.mainGrid == grid && (hs.state == CapitalFSD.CapState.transit || hs.state == CapitalFSD.CapState.jumpIn || hs.state == CapitalFSD.CapState.jumpOut))
                     return true;
             }
             return false;
@@ -184,7 +201,7 @@ namespace WarpDriveMod
             if (grid == null) return false;
             foreach (var ws in warpSystems)
             {
-                if (ws.grid?.MainGrid == grid && ws.WarpState != WarpSystem.State.Idle)
+                if (ws.grid?.mainGrid == grid && ws.warpState != WarpSystem.State.idle)
                     return true;
             }
             return false;
@@ -192,73 +209,66 @@ namespace WarpDriveMod
 
         public WarpDriveSession()
         {
-            Instance = this;
+            instance = this;
+        }
+        
+        public override void BeforeStart()
+        {
+            base.BeforeStart();
+
+            try
+            {
+                Settings.GetShared();
+
+                MyAPIGateway.Multiplayer.RegisterSecureMessageHandler(warpConfigPacket, ReceiveWarpConfig);
+
+                MyVisualScriptLogicProvider.PlayerLeftCockpit += PlayerLeftCockpit;
+
+                if (MyAPIGateway.Multiplayer.IsServer)
+                    MyVisualScriptLogicProvider.PlayerDisconnected += PlayerDisconnected;
+
+                if (!MyAPIGateway.Utilities.IsDedicated && !MyAPIGateway.Multiplayer.IsServer)
+                    RequestConfig();
+            }
+            catch (Exception)
+            {
+            }
         }
 
         public void InitJumpControl()
         {
-            if (Instance == null || WarpDrive.Instance == null || WarpSystem.Instance == null)
+            if (instance == null || _controlInit)
                 return;
 
-            if (!_controlInit)
-            {
-                isPlayer = !MyAPIGateway.Utilities.IsDedicated;
-                isHost = MyAPIGateway.Multiplayer.IsServer;
+            _controlInit = true;
 
-                MyAPIGateway.Multiplayer.RegisterSecureMessageHandler(toggleWarpPacketId, ReceiveToggleWarp);
-                MyAPIGateway.Multiplayer.RegisterSecureMessageHandler(toggleWarpPacketIdSpeed, ReceiveWarpSpeed);
-                MyAPIGateway.Multiplayer.RegisterSecureMessageHandler(WarpConfigPacketId, ReceiveWarpConfig);
-                MyAPIGateway.Multiplayer.RegisterSecureMessageHandler(toggleHyperspacePacketId, ReceiveToggleHyperspace);
-                MyAPIGateway.Multiplayer.RegisterSecureMessageHandler(hyperspaceFXPacketId, ReceiveHyperspaceFX);
-                MyAPIGateway.Multiplayer.RegisterSecureMessageHandler(fleetJumpPacketId, ReceiveFleetJump);
+                MyAPIGateway.Multiplayer.RegisterSecureMessageHandler(warpTogglePacket, ReceiveToggleWarp);
+                MyAPIGateway.Multiplayer.RegisterSecureMessageHandler(warpSpeedPacket, ReceiveWarpSpeed);
+                MyAPIGateway.Multiplayer.RegisterSecureMessageHandler(warpStatePacket, ReceiveWarpState);
+                MyAPIGateway.Multiplayer.RegisterSecureMessageHandler(hyperspaceTogglePacket, ReceiveToggleHyperspace);
+                MyAPIGateway.Multiplayer.RegisterSecureMessageHandler(hyperspaceFXPacket, ReceiveHyperspaceFX);
+                MyAPIGateway.Multiplayer.RegisterSecureMessageHandler(fleetJumpPacket, ReceiveFleetJump);
 
-                if (isHost)
-                {
-                    if (isPlayer)
-                    {
-                        // Session is host, toggle the warp drive directly.
-                        MyLog.Default.WriteLineAndConsole("Initialized Warp Drive mod on a hosted multiplayer world.");
-                        toggle = ToggleWarp;
-                    }
-                    else
-                    {
-                        // Do not create terminal controls on dedicated server.
-                        MyLog.Default.WriteLineAndConsole("Initialized Warp Drive mod on dedicated server.");
-                    }
-                }
-                else
-                {
-                    if (isPlayer)
-                    {
-                        // Session is client, tell the host to toggle the warp drive.
-                        toggle = TransmitToggleWarp;
-                        MyLog.Default.WriteLineAndConsole("Initialized Frame Shift Drive mod on a multiplayer client.");
-                    }
-                    else
-                        throw new Exception("Session is not host or client. What?!");
-                }
+            if (MyAPIGateway.Multiplayer.IsServer)
+                MyAPIGateway.Session.DamageSystem.RegisterBeforeDamageHandler(0, (object target, ref MyDamageInformation info) => WarpSystem.PlayerO2DamagePause(target, ref info, warpSystems));
 
-                // no need to init controls on server.
-                if (MyAPIGateway.Utilities.IsDedicated)
-                {
-                    _controlInit = true;
-                    return;
-                }
+            if (MyAPIGateway.Utilities.IsDedicated)
+                return;
 
-                if (toggle == null)
-                    return;
+            Action<IMyTerminalBlock> toggle = TransmitToggleWarp;
+            if (MyAPIGateway.Multiplayer.IsServer)
+                toggle = ToggleWarp;
 
                 IMyTerminalAction startWarp = MyAPIGateway.TerminalControls.CreateAction<IMyUpgradeModule>("ToggleWarp");
                 startWarp.Enabled = IsWarpDrive;
                 startWarp.Name = new StringBuilder("Toggle Supercruise");
                 startWarp.Action = toggle;
                 startWarp.Icon = "Textures\\GUI\\Icons\\Actions\\Toggle.dds";
-                startWarp.Writer = ActionSupercruiseWriter;
                 MyAPIGateway.TerminalControls.AddAction<IMyUpgradeModule>(startWarp);
 
                 IMyTerminalControlButton startWarpBtn = MyAPIGateway.TerminalControls.CreateControl<IMyTerminalControlButton, IMyUpgradeModule>("StartWarpBtn");
-                startWarpBtn.Tooltip = MyStringId.GetOrCompute("Toggles the status of the warp drives on the ship");
-                startWarpBtn.Title = MyStringId.GetOrCompute("Toggle Warp");
+                startWarpBtn.Tooltip = MyStringId.GetOrCompute("Activates/deactivates the FSD's Supercruise mode");
+                startWarpBtn.Title = MyStringId.GetOrCompute("Toggle Supercruise");
                 startWarpBtn.Enabled = IsWarpDrive;
                 startWarpBtn.Visible = IsWarpDrive;
                 startWarpBtn.SupportsMultipleBlocks = false;
@@ -274,107 +284,57 @@ namespace WarpDriveMod
                 MyAPIGateway.TerminalControls.AddControl<IMyUpgradeModule>(inWarp);
 
                 HyperspaceControls.RegisterControls();
-
-                _controlInit = true;
-            }
-        }
-
-        private void ActionSupercruiseWriter(IMyTerminalBlock block, StringBuilder sb)
-        {
-            WarpDrive drive = block?.GameLogic?.GetAs<WarpDrive>();
-            if (!HasValidSystem(drive))
-            {
-                sb.Append("No FSD");
-                return;
-            }
-
-            if (drive.Hyperspace != null && drive.Hyperspace.State != HyperspaceSystem.HyperState.Idle)
-            {
-                sb.Append("Hyper");
-                return;
-            }
-
-            switch (drive.System.WarpState)
-            {
-                case WarpSystem.State.Idle:
-                    sb.Append("Ready");
-                    break;
-                case WarpSystem.State.Charging:
-                    sb.Append("Charge");
-                    break;
-                case WarpSystem.State.Active:
-                    sb.Append("Cruise");
-                    break;
-            }
         }
 
         private bool GetWarpStatus(IMyTerminalBlock block)
         {
             WarpDrive drive = block?.GameLogic?.GetAs<WarpDrive>();
-            if (!HasValidSystem(drive))
-                return false;
 
-            return drive.System.WarpState != WarpSystem.State.Idle;
+            return HasValidSystem(drive) && drive.warpSystem.warpState != WarpSystem.State.idle;
         }
 
         private void SetWarpStatus(IMyTerminalBlock block, bool state)
         {
             WarpDrive drive = block?.GameLogic?.GetAs<WarpDrive>();
-            if (!HasValidSystem(drive))
+            if (!HasValidSystem(drive) || !MyAPIGateway.Multiplayer.IsServer)
                 return;
 
-            long PlayerID = 0;
+            if (state != (drive.warpSystem.warpState != WarpSystem.State.idle))
+                drive.warpSystem.RequestToggle(drive, null);
+        }
 
-            if (state)
-            {
-                if (drive.System.WarpState == WarpSystem.State.Idle)
-                    drive.System.ToggleWarp(block, block.CubeGrid, PlayerID);
-            }
-            else
-            {
-                if (drive.System.WarpState != WarpSystem.State.Idle)
-                    drive.System.ToggleWarp(block, block.CubeGrid, PlayerID);
-            }
+        private IMyPlayer GetPlayer(ulong steamId)
+        {
+            playerList.Clear();
+            MyAPIGateway.Players.GetPlayers(playerList, p => p.SteamUserId == steamId);
+            return playerList.Count > 0 ? playerList[0] : null;
+        }
+
+        private static WarpDrive GetDrive(long entityId)
+        {
+            IMyEntity entity;
+            return MyAPIGateway.Entities.TryGetEntityById(entityId, out entity) ? (entity as IMyFunctionalBlock)?.GameLogic?.GetAs<WarpDrive>() : null;
         }
 
         private void ReceiveToggleWarp(ushort channel, byte[] data, ulong sender, bool fromServer)
         {
+            if (!MyAPIGateway.Multiplayer.IsServer)
+                return;
+
             var message = MyAPIGateway.Utilities.SerializeFromBinary<ItemsMessage>(data);
             if (message == null)
                 return;
 
-            IMyEntity entity;
-            if (!MyAPIGateway.Entities.TryGetEntityById(message.EntityId, out entity))
-                return;
-
-            var block = entity as IMyFunctionalBlock;
-            if (block != null)
-            {
-                WarpDrive drive = block?.GameLogic?.GetAs<WarpDrive>();
-                if (!HasValidSystem(drive))
+            WarpDrive drive = GetDrive(message.entityId);
+            WarpSystem system = RefreshSystem(drive);
+            if (system == null)
                     return;
 
-                if (drive.System.WarpState == WarpSystem.State.Idle)
-                {
-                    if (drive.Hyperspace != null && drive.Hyperspace.State != HyperspaceSystem.HyperState.Idle)
-                    {
-                        drive.System.SendMessage(drive.System.warnInUse, 3f, "Red", message.SendingPlayerID);
-                        return;
-                    }
+            IMyPlayer player = GetPlayer(sender);
+            if (player == null)
+                return;
 
-                    RefreshGridCockpits(block);
-
-                    var Gridmatrix = drive.System.grid.FindWorldMatrix();
-
-                    if (WarpDrive.Instance.ProxymityDangerCharge(Gridmatrix, block.CubeGrid))
-                    {
-                        drive.System.SendMessage(drive.System.ProximytyAlert, 2f, "Red", message.SendingPlayerID);
-                        return;
-                    }
-                }
-
-                drive.System.ToggleWarp(block, block.CubeGrid, message.SendingPlayerID);
-            }
+            system.RequestToggle(drive, player);
         }
 
         private void ReceiveToggleHyperspace(ushort channel, byte[] data, ulong sender, bool fromServer)
@@ -384,7 +344,7 @@ namespace WarpDriveMod
                 return;
 
             IMyEntity entity;
-            if (!MyAPIGateway.Entities.TryGetEntityById(message.EntityId, out entity))
+            if (!MyAPIGateway.Entities.TryGetEntityById(message.entityId, out entity))
                 return;
 
             var block = entity as IMyFunctionalBlock;
@@ -396,49 +356,49 @@ namespace WarpDriveMod
                     drive = HyperspaceControls.GetWarpDrive(block as IMyTerminalBlock);
                 }
 
-                if (drive?.Hyperspace != null)
+                if (drive?.hyperspace != null)
                 {
-                    drive.Hyperspace.Mode = (HyperspaceSystem.JumpMode)message.Mode;
-                    drive.Hyperspace.JumpDistanceRatio = message.JumpDistanceRatio;
-                    if (message.HasGpsCoords)
+                    drive.hyperspace.mode = (HyperspaceSystem.JumpMode)message.mode;
+                    drive.hyperspace.jumpDistanceRatio = message.jumpDistanceRatio;
+                    if (message.hasGpsCoords)
                     {
-                        drive.Hyperspace.SelectedGpsCoords = message.GpsCoords;
-                        drive.Hyperspace.SelectedGpsName = message.GpsName ?? string.Empty;
+                        drive.hyperspace.selectedGpsCoords = message.gpsCoords;
+                        drive.hyperspace.selectedGpsName = message.gpsName ?? string.Empty;
                     }
                     else
                     {
-                        drive.Hyperspace.SelectedGpsCoords = null;
-                        drive.Hyperspace.SelectedGpsName = string.Empty;
+                        drive.hyperspace.selectedGpsCoords = null;
+                        drive.hyperspace.selectedGpsName = string.Empty;
                     }
 
                     if (MyAPIGateway.Multiplayer.IsServer || MyAPIGateway.Utilities.IsDedicated)
                     {
-                        MyAPIGateway.Multiplayer.SendMessageToOthers(toggleHyperspacePacketId, data);
+                        MyAPIGateway.Multiplayer.SendMessageToOthers(hyperspaceTogglePacket, data);
                     }
 
-                    drive.Hyperspace.TriggerJump(message.SendingPlayerID);
+                    drive.hyperspace.TriggerJump(message.sendingPlayerID);
                 }
-                else if (drive?.CapitalFSD != null)
+                else if (drive?.capitalFSD != null)
                 {
-                    drive.CapitalFSD.Mode = (HyperspaceSystem.JumpMode)message.Mode;
-                    drive.CapitalFSD.JumpDistanceRatio = message.JumpDistanceRatio;
-                    if (message.HasGpsCoords)
+                    drive.capitalFSD.mode = (HyperspaceSystem.JumpMode)message.mode;
+                    drive.capitalFSD.jumpDistanceRatio = message.jumpDistanceRatio;
+                    if (message.hasGpsCoords)
                     {
-                        drive.CapitalFSD.SelectedGpsCoords = message.GpsCoords;
-                        drive.CapitalFSD.SelectedGpsName = message.GpsName ?? string.Empty;
+                        drive.capitalFSD.selectedGpsCoords = message.gpsCoords;
+                        drive.capitalFSD.selectedGpsName = message.gpsName ?? string.Empty;
                     }
                     else
                     {
-                        drive.CapitalFSD.SelectedGpsCoords = null;
-                        drive.CapitalFSD.SelectedGpsName = string.Empty;
+                        drive.capitalFSD.selectedGpsCoords = null;
+                        drive.capitalFSD.selectedGpsName = string.Empty;
                     }
 
                     if (MyAPIGateway.Multiplayer.IsServer || MyAPIGateway.Utilities.IsDedicated)
                     {
-                        MyAPIGateway.Multiplayer.SendMessageToOthers(toggleHyperspacePacketId, data);
+                        MyAPIGateway.Multiplayer.SendMessageToOthers(hyperspaceTogglePacket, data);
                     }
 
-                    drive.CapitalFSD.TriggerJump(message.SendingPlayerID);
+                    drive.capitalFSD.TriggerJump(message.sendingPlayerID);
                 }
             }
         }
@@ -450,20 +410,19 @@ namespace WarpDriveMod
 
             if (MyAPIGateway.Session?.Camera != null)
             {
-                double distSq = Vector3D.DistanceSquared(msg.Position, MyAPIGateway.Session.Camera.Position);
-                // Within 50km range for visual/sound effects (Particles.sbc DistanceMax is 50000)
+                double distSq = VRageMath.Vector3D.DistanceSquared(msg.position, MyAPIGateway.Session.Camera.Position);
                 if (distSq <= 50000.0 * 50000.0)
                 {
-                    if (msg.IsArrival)
+                    if (msg.isArrival)
                     {
-                        if (msg.IsArrivalLead)
-                            HyperspaceSystem.SpawnGlobalArrivalLeadFX(msg.Position, msg.Direction, msg.Scale, msg.Speed, msg.IsPrototech);
+                        if (msg.isArrivalLead)
+                            HyperspaceSystem.SpawnGlobalArrivalLeadFX(msg.position, msg.direction, msg.scale, msg.speed, msg.isPrototech);
                         else
-                            HyperspaceSystem.SpawnGlobalArrivalFX(msg.Position, msg.Direction, msg.Scale, msg.IsPrototech);
+                            HyperspaceSystem.SpawnGlobalArrivalFX(msg.position, msg.direction, msg.scale, msg.isPrototech);
                     }
                     else
                     {
-                        HyperspaceSystem.SpawnGlobalOriginFX(msg.Position, msg.Direction, msg.Scale, msg.Speed, msg.IsPrototech);
+                        HyperspaceSystem.SpawnGlobalOriginFX(msg.position, msg.direction, msg.scale, msg.speed, msg.isPrototech);
                     }
                 }
             }
@@ -479,24 +438,34 @@ namespace WarpDriveMod
 
         public void TransmitToggleWarp(IMyTerminalBlock block)
         {
-            WarpDrive drive = block?.GameLogic?.GetAs<WarpDrive>();
             var player = MyAPIGateway.Session?.Player;
 
-            if (drive == null || player == null)
+            if (!IsWarpDrive(block) || player == null)
                 return;
 
-            if (drive.System != null && drive.System.WarpState == WarpSystem.State.Idle && drive.Hyperspace != null && drive.Hyperspace.State != HyperspaceSystem.HyperState.Idle)
-            {
-                drive.System.SendMessage(drive.System.warnInUse, 3f, "Red", player.IdentityId);
-                return;
-            }
-
-            MyAPIGateway.Multiplayer.SendMessageToServer(toggleWarpPacketId,
+            MyAPIGateway.Multiplayer.SendMessageToServer(warpTogglePacket,
                 message: MyAPIGateway.Utilities.SerializeToBinary(new ItemsMessage
                 {
-                    EntityId = block.EntityId,
-                    SendingPlayerID = player.IdentityId
+                    entityId = block.EntityId,
+                    sendingPlayerID = player.IdentityId
                 }));
+        }
+
+        private void ReceiveWarpState(ushort channel, byte[] data, ulong sender, bool fromServer)
+        {
+            if (!fromServer || MyAPIGateway.Multiplayer.IsServer)
+                return;
+
+            var message = MyAPIGateway.Utilities.SerializeFromBinary<WarpStateMessage>(data);
+            if (message == null)
+                return;
+
+            WarpDrive drive = GetDrive(message.entityId);
+            WarpSystem system = RefreshSystem(drive);
+            if (system == null)
+                return;
+
+            system.ApplyState(drive, message);
         }
 
         private void ReceiveWarpSpeed(ushort channel, byte[] data, ulong sender, bool fromServer)
@@ -505,38 +474,32 @@ namespace WarpDriveMod
             if (message == null)
                 return;
 
-            IMyEntity entity;
-            if (!MyAPIGateway.Entities.TryGetEntityById(message.EntityId, out entity))
-                return;
-
-            var block = entity as IMyFunctionalBlock;
-            WarpDrive drive = block?.GameLogic?.GetAs<WarpDrive>();
+            WarpDrive drive = GetDrive(message.entityId);
 
             if (!HasValidSystem(drive))
                 return;
 
-            if (!warpDrivesSpeeds.ContainsKey(block))
-                warpDrivesSpeeds.Add(block, message.WarpSpeed);
-            else
-                warpDrivesSpeeds[block] = message.WarpSpeed;
-
-            // Message is from client and should be relayed
-            //if (MyAPIGateway.Utilities.IsDedicated)
-            //    MyAPIGateway.Multiplayer.SendMessageToOthers(toggleWarpPacketIdSpeed, data);
+            if (MyAPIGateway.Multiplayer.IsServer)
+            {
+                if (!fromServer)
+                    drive.warpSystem.ReadClientSpeedInput(drive, GetPlayer(sender), message.warpSpeed);
+            }
+            else if (fromServer)
+            {
+                drive.warpSystem.ApplyServerSpeed(message.warpSpeed);
+            }
         }
 
-        public void TransmitWarpSpeed(IMyFunctionalBlock WarpBlock, double currentSpeedPt)
+        public void TransmitWarpSpeed(IMyFunctionalBlock warpBlock, int direction)
         {
-            var DriveBlock = WarpBlock as IMyTerminalBlock;
-            WarpDrive drive = DriveBlock?.GameLogic?.GetAs<WarpDrive>();
-            if (drive == null)
+            if (!IsWarpDrive(warpBlock))
                 return;
 
-            MyAPIGateway.Multiplayer.SendMessageToServer(toggleWarpPacketIdSpeed,
+            MyAPIGateway.Multiplayer.SendMessageToServer(warpSpeedPacket,
                 message: MyAPIGateway.Utilities.SerializeToBinary(new SpeedMessage
                 {
-                    EntityId = DriveBlock.EntityId,
-                    WarpSpeed = currentSpeedPt
+                    entityId = warpBlock.EntityId,
+                    warpSpeed = direction
                 }));
         }
 
@@ -546,127 +509,108 @@ namespace WarpDriveMod
             if (message == null)
                 return;
 
-            IMyEntity entity;
-            if (!MyAPIGateway.Entities.TryGetEntityById(message.BlockID, out entity))
-                return;
-
-            var block = entity as IMyFunctionalBlock;
-            if (block != null)
-            {
-                WarpDrive drive = block?.GameLogic?.GetAs<WarpDrive>();
-                if (!HasValidSystem(drive))
-                    return;
-
                 if (MyAPIGateway.Utilities.IsDedicated || MyAPIGateway.Multiplayer.IsServer)
                 {
-                    MyAPIGateway.Multiplayer.SendMessageTo(WarpConfigPacketId,
-                        message: MyAPIGateway.Utilities.SerializeToBinary(new Settings
-                        {
-                            maxSpeed = drive.Settings.maxSpeed,
-                            startSpeed = drive.Settings.startSpeed,
-                            maxHeat = drive.Settings.maxHeat,
-                            heatGain = drive.Settings.heatGain,
-                            heatDissipationDrive = drive.Settings.heatDissipationDrive,
-                            baseRequiredPower = drive.Settings.baseRequiredPower,
-                            baseRequiredPowerSmall = drive.Settings.baseRequiredPowerSmall,
-                            powerRequirementMultiplier = drive.Settings.powerRequirementMultiplier,
-                            powerRequirementBySpeedDeviderLarge = drive.Settings.powerRequirementBySpeedDeviderLarge,
-                            powerRequirementBySpeedDeviderSmall = drive.Settings.powerRequirementBySpeedDeviderSmall,
-                            AllowInGravity = drive.Settings.AllowInGravity,
-                            AllowUnlimittedSpeed = drive.Settings.AllowUnlimittedSpeed,
-                            AllowToDetectEnemyGrids = drive.Settings.AllowToDetectEnemyGrids,
-                            DetectEnemyGridInRange = drive.Settings.DetectEnemyGridInRange,
-                            DelayJumpIfEnemyIsNear = drive.Settings.DelayJumpIfEnemyIsNear,
-                            DelayJump = drive.Settings.DelayJump,
-                            PrototechJump = drive.Settings.PrototechJump,
-                            AllowInGravityMax = drive.Settings.AllowInGravityMax,
-                            AllowInGravityMaxSpeed = drive.Settings.AllowInGravityMaxSpeed,
-                            AllowInGravityMinAltitude = drive.Settings.AllowInGravityMinAltitude,
-                            BlockID = block.EntityId,
-                        }), recipient: sender);
-                }
-
-                if (!MyAPIGateway.Utilities.IsDedicated && !MyAPIGateway.Multiplayer.IsServer)
-                {
-                    drive.Settings.maxSpeed = message.maxSpeed;
-                    drive.Settings.startSpeed = message.startSpeed;
-                    drive.Settings.maxHeat = message.maxHeat;
-                    drive.Settings.heatGain = message.heatGain;
-                    drive.Settings.heatDissipationDrive = message.heatDissipationDrive;
-                    drive.Settings.baseRequiredPower = message.baseRequiredPower;
-                    drive.Settings.baseRequiredPowerSmall = message.baseRequiredPowerSmall;
-                    drive.Settings.powerRequirementMultiplier = message.powerRequirementMultiplier;
-                    drive.Settings.powerRequirementBySpeedDeviderLarge = message.powerRequirementBySpeedDeviderLarge;
-                    drive.Settings.powerRequirementBySpeedDeviderSmall = message.powerRequirementBySpeedDeviderSmall;
-                    drive.Settings.AllowInGravity = message.AllowInGravity;
-                    drive.Settings.AllowUnlimittedSpeed = message.AllowUnlimittedSpeed;
-                    drive.Settings.AllowToDetectEnemyGrids = message.AllowToDetectEnemyGrids;
-                    drive.Settings.DetectEnemyGridInRange = message.DetectEnemyGridInRange;
-                    drive.Settings.DelayJumpIfEnemyIsNear = message.DelayJumpIfEnemyIsNear;
-                    drive.Settings.DelayJump = message.DelayJump;
-                    drive.Settings.PrototechJump = message.PrototechJump;
-                    drive.Settings.AllowInGravityMax = message.AllowInGravityMax;
-                    drive.Settings.AllowInGravityMaxSpeed = message.AllowInGravityMaxSpeed;
-                    drive.Settings.AllowInGravityMinAltitude = message.AllowInGravityMinAltitude;
-                    drive.Settings.BlockID = message.BlockID;
-
-                    Settings.SaveClient(message);
-                }
+                if (!fromServer)
+                    MyAPIGateway.Multiplayer.SendMessageTo(warpConfigPacket,
+                        message: MyAPIGateway.Utilities.SerializeToBinary(Settings.GetShared()), recipient: sender);
+            }
+            else if (fromServer)
+            {
+                Settings.GetShared().CopyFrom(message);
             }
         }
 
-        public void TransmitWarpConfig(Settings SettingsData, long BlockID)
+        public void RequestConfig()
         {
-            MyAPIGateway.Multiplayer.SendMessageToServer(WarpConfigPacketId,
-                message: MyAPIGateway.Utilities.SerializeToBinary(new Settings
-                {
-                    BlockID = BlockID,
-                }));
+            MyAPIGateway.Multiplayer.SendMessageToServer(warpConfigPacket,
+                message: MyAPIGateway.Utilities.SerializeToBinary(new Settings()));
+        }
+
+        private void PlayerDisconnected(long playerId)
+        {
+            foreach (WarpSystem s in warpSystems)
+                s?.PilotDisconnected(playerId);
+        }
+
+        private void PlayerLeftCockpit(string entityName, long playerId, string gridName)
+        {
+            if (!MyAPIGateway.Multiplayer.IsServer)
+                return;
+
+            foreach (WarpSystem s in warpSystems)
+            {
+                if (s != null && s.OccupantLeft(playerId))
+                    return;
+            }
+
+            long cockpitId;
+            if (!long.TryParse(entityName, out cockpitId))
+                return;
+
+            var cockpit = MyAPIGateway.Entities.GetEntityById(cockpitId) as IMyShipController;
+            var cockpitGrid = cockpit?.CubeGrid as MyCubeGrid;
+            if (cockpitGrid == null)
+                return;
+
+            WarpSystem system = GetGridWarpSystem(cockpitGrid);
+            if (system == null || !system.valid || system.warpState == WarpSystem.State.idle)
+                return;
+
+            system.PilotLeft(cockpit);
         }
 
         private bool IsWarpDrive(IMyTerminalBlock block)
         {
-            var drive = block?.GameLogic?.GetAs<WarpDrive>();
-            return drive != null && !drive.IsCapitalFSD;
+            return block?.GameLogic?.GetAs<WarpDrive>() != null;
+        }
+
+        public void QueueExposureCheck(HeatSink heatSink)
+        {
+            if (heatSink == null || heatSink.exposureQueued)
+                return;
+
+            heatSink.exposureQueued = true;
+            exposureQueue.Enqueue(heatSink);
         }
 
         public override void Simulate()
         {
-            Runtime++;
+            runtime++;
 
-            for (int i = requireSystem.Count - 1; i >= 0; i--)
-            {
-                WarpDrive drive = requireSystem[i];
-                if (drive.System == null || drive.System.InvalidOn <= Runtime - WarpConstants.groupSystemDelay)
+                int budget = Math.Max(1, (exposureQueue.Count + 119) / 120); //rate limiting for grids with tons of sinks
+                while (budget-- > 0 && exposureQueue.Count > 0)
                 {
-                    requireSystem.RemoveAtFast(i);
+                    HeatSink heatSink = exposureQueue.Dequeue();
+                    heatSink.exposureQueued = false;
 
-                    var DriveSystemNew = GetWarpSystem(drive);
-                    if (DriveSystemNew != null)
-                        drive.SetWarpSystem(DriveSystemNew);
-                }
-                else if (HasValidSystem(drive))
-                    requireSystem.RemoveAtFast(i);
+                if (heatSink.block != null && !heatSink.block.MarkedForClose)
+                    heatSink.ExposureCheck();
             }
 
             for (int i = warpSystems.Count - 1; i >= 0; i--)
             {
                 WarpSystem s = warpSystems[i];
-                if (s.Valid)
+
+                if (s.isSleeping && (runtime + s.id) % 300 != 0) //sleepy bois resync every 5s
+                    continue;
+
+                if (s.valid)
+                {
+                    if (!s.isSleeping)
                     s.UpdateBeforeSimulation();
+                }
                 else
                     warpSystems.RemoveAtFast(i);
             }
 
-            if (newSystems != null && newSystems.Count > 0)
-            {
                 foreach (WarpSystem s in newSystems)
                 {
                     if (!warpSystems.Contains(s))
                         warpSystems.Add(s);
                 }
+
                 newSystems.Clear();
-            }
 
             if (hyperspaceSystems.Count > 0)
             {
@@ -676,9 +620,7 @@ namespace WarpDriveMod
                 {
                     var hs = tempHyperspaceList[i];
                     if (hs != null)
-                    {
                         hs.UpdateSimulationTick();
-                    }
                 }
                 tempHyperspaceList.Clear();
             }
@@ -689,42 +631,62 @@ namespace WarpDriveMod
                 tempCapitalFSDList.AddRange(capitalFSDSystems);
                 for (int i = 0; i < tempCapitalFSDList.Count; i++)
                 {
-                    var hs = tempCapitalFSDList[i];
-                    if (hs != null)
-                    {
-                        hs.Update();
-                    }
+                    var cap = tempCapitalFSDList[i];
+                    if (cap != null)
+                        cap.Update();
                 }
                 tempCapitalFSDList.Clear();
             }
         }
 
+        public override void Draw()
+        {
+            if (MyAPIGateway.Utilities.IsDedicated)
+                return;
+
+            foreach (WarpSystem s in warpSystems)
+                s.Draw();
+        }
+
+        public WarpSystem GetGridWarpSystem(MyCubeGrid grid)
+        {
+            if (grid == null)
+                return null;
+
+            return FindGridSystem(warpSystems, grid) ?? FindGridSystem(newSystems, grid);
+        }
+
+        private static WarpSystem FindGridSystem(List<WarpSystem> systems, MyCubeGrid grid)
+        {
+            foreach (WarpSystem s in systems)
+            {
+                if (s?.grid != null && s.grid.Contains(grid))
+                    return s;
+            }
+
+            return null;
+        }
+
         public WarpSystem GetWarpSystem(WarpDrive drive)
         {
             if (HasValidSystem(drive))
-                return drive.System; // Why are you here?!?!
+                return drive.warpSystem;
 
             foreach (WarpSystem s in warpSystems)
             {
-                if (s == null)
-                    continue;
-
-                if (s.Valid && s.Contains(drive))
+                if (s != null && s.valid && s.Contains(drive))
                     return s;
             }
 
             foreach (WarpSystem s in newSystems)
             {
-                if (s == null)
-                    continue;
-
-                if (s.Contains(drive))
+                if (s != null && s.Contains(drive))
                     return s;
             }
 
-            WarpSystem newSystem = new WarpSystem(drive, drive.System);
+            WarpSystem newSystem = new WarpSystem(drive);
 
-            if (newSystem == null)
+            if (newSystem.grid == null)
                 return null;
 
             if (!newSystems.Contains(newSystem))
@@ -733,156 +695,67 @@ namespace WarpDriveMod
             return newSystem;
         }
 
-        public WarpSystem GetWarpSystem(MyCubeGrid grid)
+        private WarpSystem RefreshSystem(WarpDrive drive)
         {
-            if (grid == null) return null;
+            if (drive?.block == null || drive.block.MarkedForClose)
+                return null;
 
-            foreach (WarpSystem s in warpSystems)
-            {
-                if (s != null && s.Valid && s.grid != null && s.grid.Contains(grid))
-                    return s;
-            }
+            if (drive.warpSystem?.grid != null && drive.warpSystem.grid.IsValid(true))
+                return drive.warpSystem;
 
-            foreach (WarpSystem s in newSystems)
-            {
-                if (s != null && s.grid != null && s.grid.Contains(grid))
-                    return s;
-            }
+            WarpSystem system = GetWarpSystem(drive);
+            if (system == null || !system.valid)
+                return null;
 
-            return null;
-        }
-
-        public void DelayedGetWarpSystem(WarpDrive drive)
-        {
-            requireSystem.Add(drive);
+            drive.SetWarpSystem(system);
+            return system;
         }
 
         private void ToggleWarp(IMyTerminalBlock block)
         {
             WarpDrive drive = block?.GameLogic?.GetAs<WarpDrive>();
-            if (!HasValidSystem(drive))
+            WarpSystem system = RefreshSystem(drive);
+            if (system == null)
                 return;
 
-            if (drive.System.WarpState == WarpSystem.State.Idle && drive.Hyperspace != null && drive.Hyperspace.State != HyperspaceSystem.HyperState.Idle)
-            {
-                drive.System.SendMessage(drive.System.warnInUse, 3f, "Red", 0);
-                return;
-            }
-
-            drive.System.ToggleWarp(block, block.CubeGrid, 0);
-        }
-
-        public void RefreshGridCockpits(IMyTerminalBlock block)
-        {
-            if (block == null)
-                return;
-
-            MyCubeGrid grid = (MyCubeGrid)block.CubeGrid;
-            if (grid == null)
-                return;
-
-            var slimList = new List<IMySlimBlock>();
-            var ShipControllerList = new HashSet<IMyShipController>();
-
-            block.CubeGrid.GetBlocks(slimList);
-
-            // check all valid cockpits
-            foreach (var slim in slimList)
-            {
-                if (slim.FatBlock != null && slim.FatBlock is IMyShipController)
-                {
-                    if (WarpSystem.Instance.grid.IsShipController(slim.FatBlock))
-                        ShipControllerList.Add(slim.FatBlock as IMyShipController);
-                }
-            }
-
-            // remove found cockpits from active list
-            HashSet<IMyShipController> gridCockpits = new HashSet<IMyShipController>();
-            if (WarpSystem.Instance.grid.cockpits.TryGetValue(grid, out gridCockpits))
-                WarpSystem.Instance.grid.cockpits[grid] = null;
-
-            // add updated cocpits to active list
-            WarpSystem.Instance.grid.cockpits[grid] = ShipControllerList;
+            system.RequestToggle(drive, MyAPIGateway.Session?.Player);
         }
 
         private bool HasValidSystem(WarpDrive drive)
         {
-            return drive?.System != null && drive.System.Valid;
-        }
-
-        public override void Draw()
-        {
-            try
-            {
-                if (MyAPIGateway.Utilities.IsDedicated) return;
-
-                var player = MyAPIGateway.Session?.Player;
-                if (player == null) return;
-
-                var controlledBlock = (player.Controller?.ControlledEntity?.Entity as VRage.Game.ModAPI.IMyCubeBlock) 
-                                   ?? (player.Character?.Parent as VRage.Game.ModAPI.IMyCubeBlock);
-                if (controlledBlock == null) return;
-
-                var grid = controlledBlock.CubeGrid as MyCubeGrid;
-                if (grid == null) return;
-
-                var system = GetWarpSystem(grid);
-                if (system?.Hyperspace != null)
-                {
-                    system.Hyperspace.DrawTargetReticle();
-                }
-                else if (system?.CapitalFSD != null)
-                {
-                    system.CapitalFSD.DrawTargetReticle();
-                }
-                else
-                {
-                    foreach (var fat in grid.GetFatBlocks())
-                    {
-                        var drive = fat?.GameLogic?.GetAs<WarpDrive>();
-                        if (drive?.Hyperspace != null)
-                        {
-                            drive.Hyperspace.DrawTargetReticle();
-                            break;
-                        }
-                        else if (drive?.CapitalFSD != null)
-                        {
-                            drive.CapitalFSD.DrawTargetReticle();
-                            break;
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                MyLog.Default.Error("[WarpDriveSession] Draw error: " + ex);
-            }
+            return drive?.warpSystem != null && drive.warpSystem.valid;
         }
 
         protected override void UnloadData()
         {
             try
             {
-                if (Instance == null)
+                if (instance == null)
                     return;
 
-                if (WarpDrive.Instance != null)
-                    MyVisualScriptLogicProvider.PlayerLeftCockpit -= WarpDrive.Instance.PlayerLeftCockpit;
+                MyAPIGateway.Multiplayer.UnregisterSecureMessageHandler(warpTogglePacket, ReceiveToggleWarp);
+                MyAPIGateway.Multiplayer.UnregisterSecureMessageHandler(warpSpeedPacket, ReceiveWarpSpeed);
+                MyAPIGateway.Multiplayer.UnregisterSecureMessageHandler(warpStatePacket, ReceiveWarpState);
+                MyAPIGateway.Multiplayer.UnregisterSecureMessageHandler(warpConfigPacket, ReceiveWarpConfig);
+                MyAPIGateway.Multiplayer.UnregisterSecureMessageHandler(hyperspaceTogglePacket, ReceiveToggleHyperspace);
+                MyAPIGateway.Multiplayer.UnregisterSecureMessageHandler(hyperspaceFXPacket, ReceiveHyperspaceFX);
+                MyAPIGateway.Multiplayer.UnregisterSecureMessageHandler(fleetJumpPacket, ReceiveFleetJump);
 
-                MyAPIGateway.Multiplayer.UnregisterSecureMessageHandler(toggleWarpPacketId, ReceiveToggleWarp);
-                MyAPIGateway.Multiplayer.UnregisterSecureMessageHandler(toggleWarpPacketIdSpeed, ReceiveWarpSpeed);
-                MyAPIGateway.Multiplayer.UnregisterSecureMessageHandler(WarpConfigPacketId, ReceiveWarpConfig);
-                MyAPIGateway.Multiplayer.UnregisterSecureMessageHandler(toggleHyperspacePacketId, ReceiveToggleHyperspace);
-                MyAPIGateway.Multiplayer.UnregisterSecureMessageHandler(hyperspaceFXPacketId, ReceiveHyperspaceFX);
-                MyAPIGateway.Multiplayer.UnregisterSecureMessageHandler(fleetJumpPacketId, ReceiveFleetJump);
+                hyperspaceSystems.Clear();
+                capitalFSDSystems.Clear();
 
-                if (WarpDrive.Instance != null)
-                    WarpDrive.Instance = null;
+                MyVisualScriptLogicProvider.PlayerLeftCockpit -= PlayerLeftCockpit;
+                MyVisualScriptLogicProvider.PlayerDisconnected -= PlayerDisconnected;
 
-                if (WarpSystem.Instance != null)
-                    WarpSystem.Instance = null;
+                exposureQueue.Clear();
 
-                Instance = null;
+                foreach (WarpSystem s in warpSystems)
+                    MyAPIGateway.Session?.OxygenProviderSystem?.RemoveOxygenGenerator(s);
+
+                Settings.instance = null;
+                HeatSink.heatEnabled = true;
+
+                instance = null;
 
                 base.UnloadData();
             }

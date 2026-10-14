@@ -1,0 +1,250 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Definitions xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+    <CubeBlocks>
+
+    <!--Vanilla Heat Sink currently using air vent model-->
+        <Definition xsi:type="MyObjectBuilder_UpgradeModuleDefinition">
+            <Id>
+                <TypeId>UpgradeModule</TypeId>
+                <SubtypeId>HeatSinkLarge</SubtypeId>
+            </Id>
+            <DisplayName>Heat Sink</DisplayName>
+            <Icon>Textures\GUI\Icons\Cubes\OxygenPressurizerFullLarge.dds</Icon>
+            <Description>Collects heat from an operational Frameshift Drive and radiates it into space to keep the drive operational for longer periods of time.
+Heat Capacity: 500
+Dissipation Rate: 10 Heat/sec
+Power Use: 500kw</Description>
+            <CubeSize>Large</CubeSize>
+            <BlockTopology>TriangleMesh</BlockTopology>
+            <Size x="1" y="1" z="1" />
+            <ModelOffset x="0" y="0" z="0" />
+            <Model>Models\Cubes\Large\OxygenPressurizerFull.mwm</Model>
+            <Components>
+                <Component Subtype="SteelPlate" Count="30" />
+                <Component Subtype="Construction" Count="30" />
+                <Component Subtype="Motor" Count="8" />
+                <Component Subtype="LargeTube" Count="4" />
+                <Component Subtype="SmallTube" Count="12" />
+                <Component Subtype="Computer" Count="3" />
+                <Component Subtype="SteelPlate" Count="15" />
+            </Components>
+            <CriticalComponent Subtype="Computer" Index="0" />
+            <MountPoints>
+                <MountPoint Side="Bottom" StartX="0" StartY="0" EndX="1" EndY="1" Default="true" />
+                <MountPoint Side="Back" StartX="0" StartY="0" EndX="1" EndY="1" />
+                <MountPoint Side="Left" StartX="0" StartY="0" EndX="1" EndY="1" />
+                <MountPoint Side="Right" StartX="0" StartY="0" EndX="1" EndY="1" />
+                <MountPoint Side="Top" StartX="0" StartY="0" EndX="1" EndY="1" />
+                <MountPoint Side="Front" StartX="0" StartY="0" EndX="1" EndY="0.2" />
+                <MountPoint Side="Front" StartX="0" StartY="0.8" EndX="1" EndY="1" />
+                <MountPoint Side="Front" StartX="0" StartY="0.2" EndX="0.2" EndY="0.8" />
+                <MountPoint Side="Front" StartX="0.8" StartY="0.2" EndX="1" EndY="0.8" />
+            </MountPoints>
+            <BuildProgressModels>
+                <Model BuildPercentUpperBound="0.33" File="Models\Cubes\Large\OxygenPressurizerFullConstruction_1.mwm" />
+                <Model BuildPercentUpperBound="0.66" File="Models\Cubes\Large\OxygenPressurizerFullConstruction_2.mwm" />
+                <Model BuildPercentUpperBound="1.00" File="Models\Cubes\Large\OxygenPressurizerFullConstruction_3.mwm" />
+            </BuildProgressModels>
+            <BlockPairName>FSHeatSink</BlockPairName>
+            <MirroringY>Z</MirroringY>
+            <MirroringZ>Y</MirroringZ>
+            <EdgeType>Light</EdgeType>
+            <BuildTimeSeconds>20</BuildTimeSeconds>
+            <ResourceSinkGroup>Factory</ResourceSinkGroup>
+            <RequiredPowerInput>0.5</RequiredPowerInput>
+            <DamageEffectName>Damage_WeapExpl_Damaged</DamageEffectName>
+            <DamagedSound>ParticleWeapExpl</DamagedSound>
+            <IdleSound>BlockAirVentIdle</IdleSound>
+            <EmissiveColorPreset>Extended</EmissiveColorPreset>
+            <DestroyEffect>BlockDestroyedExplosion_Large</DestroyEffect>
+            <DestroySound>WepSmallWarheadExpl</DestroySound>
+            <IsAirTight>true</IsAirTight>
+            <PCU>20</PCU>
+        </Definition>
+
+        <Definition xsi:type="MyObjectBuilder_UpgradeModuleDefinition">
+            <Id>
+                <TypeId>UpgradeModule</TypeId>
+                <SubtypeId>HeatSinkSmall</SubtypeId>
+            </Id>
+            <DisplayName>Heat Sink</DisplayName>
+            <Icon>Textures\GUI\Icons\Cubes\OxygenPressurizerFullSmall.dds</Icon>
+            <Description>Collects heat from an operational Frameshift Drive and radiates it into space to keep the drive operational for longer periods of time.
+Heat Capacity: 100
+Dissipation Rate: 2 Heat/sec
+Power Use: 125kw</Description>
+            <CubeSize>Small</CubeSize>
+            <BlockTopology>TriangleMesh</BlockTopology>
+            <Size x="1" y="1" z="1" />
+            <ModelOffset x="0" y="0" z="0" />
+            <Model>Models\Cubes\Small\OxygenPressurizerFull.mwm</Model>
+            <Components>
+                <Component Subtype="SteelPlate" Count="5" />
+                <Component Subtype="Construction" Count="5" />
+                <Component Subtype="Motor" Count="2" />
+                <Component Subtype="LargeTube" Count="1" />
+                <Component Subtype="SmallTube" Count="4" />
+                <Component Subtype="Computer" Count="3" />
+                <Component Subtype="SteelPlate" Count="3" />
+            </Components>
+            <CriticalComponent Subtype="Computer" Index="0" />
+            <MountPoints>
+                <MountPoint Side="Bottom" StartX="0" StartY="0" EndX="1" EndY="1" Default="true" />
+                <MountPoint Side="Back" StartX="0" StartY="0" EndX="1" EndY="1" />
+                <MountPoint Side="Left" StartX="0" StartY="0" EndX="1" EndY="1" />
+                <MountPoint Side="Right" StartX="0" StartY="0" EndX="1" EndY="1" />
+                <MountPoint Side="Top" StartX="0" StartY="0" EndX="1" EndY="1" />
+                <MountPoint Side="Front" StartX="0" StartY="0" EndX="1" EndY="0.2" />
+                <MountPoint Side="Front" StartX="0" StartY="0.8" EndX="1" EndY="1" />
+                <MountPoint Side="Front" StartX="0" StartY="0.2" EndX="0.2" EndY="0.8" />
+                <MountPoint Side="Front" StartX="0.8" StartY="0.2" EndX="1" EndY="0.8" />
+            </MountPoints>
+            <BuildProgressModels>
+                <Model BuildPercentUpperBound="0.50" File="Models\Cubes\Small\OxygenPressurizerFullConstruction_1.mwm" />
+                <Model BuildPercentUpperBound="1.00" File="Models\Cubes\Small\OxygenPressurizerFullConstruction_2.mwm" />
+            </BuildProgressModels>
+            <BlockPairName>FSHeatSink</BlockPairName>
+            <MirroringY>Z</MirroringY>
+            <MirroringZ>Y</MirroringZ>
+            <EdgeType>Light</EdgeType>
+            <BuildTimeSeconds>8</BuildTimeSeconds>
+            <ResourceSinkGroup>Factory</ResourceSinkGroup>
+            <RequiredPowerInput>0.125</RequiredPowerInput>
+            <DamageEffectName>Damage_WeapExpl_Damaged</DamageEffectName>
+            <DamagedSound>ParticleWeapExpl</DamagedSound>
+            <IdleSound>BlockAirVentIdle</IdleSound>
+            <EmissiveColorPreset>Extended</EmissiveColorPreset>
+            <DestroyEffect>BlockDestroyedExplosion_Tiny</DestroyEffect>
+            <DestroySound>WepSmallWarheadExpl</DestroySound>
+            <IsAirTight>true</IsAirTight>
+            <PCU>20</PCU>
+        </Definition>
+
+    <!--Warfare 2 DLC Variant-->
+        <Definition xsi:type="MyObjectBuilder_UpgradeModuleDefinition">
+            <Id>
+                <TypeId>UpgradeModule</TypeId>
+                <SubtypeId>HeatSinkVentLarge</SubtypeId>
+            </Id>
+            <DisplayName>Heat Sink Vent</DisplayName>
+            <Icon>Textures\GUI\Icons\Cubes\HeatVent.dds</Icon>
+            <Description>Collects heat from an operational Frameshift Drive and radiates it into space to keep the drive operational for longer periods of time.
+Heat Capacity: 500
+Dissipation Rate: 10 Heat/sec
+Power Use: 500kw</Description>
+            <CubeSize>Large</CubeSize>
+            <BlockTopology>TriangleMesh</BlockTopology>
+            <Size x="1" y="1" z="1" />
+            <ModelOffset x="0" y="0" z="0" />
+            <Model>Models\Cubes\Large\HeatVent.mwm</Model>
+            <Components>
+                <Component Subtype="SteelPlate" Count="30" />
+                <Component Subtype="Construction" Count="30" />
+                <Component Subtype="Motor" Count="8" />
+                <Component Subtype="LargeTube" Count="4" />
+                <Component Subtype="SmallTube" Count="12" />
+                <Component Subtype="Computer" Count="5" />
+                <Component Subtype="SteelPlate" Count="15" />
+            </Components>
+            <CriticalComponent Subtype="Computer" Index="0" />
+            <MountPoints>
+                <MountPoint Side="Bottom" StartX="0" StartY="0" EndX="1" EndY="1" Default="true"/>
+                <MountPoint Side="Back" StartX="0" StartY="0" EndX="1" EndY="1" />
+                <MountPoint Side="Front" StartX="0" StartY="0" EndX="1" EndY="1" />
+                <MountPoint Side="Left" StartX="0" StartY="0" EndX="1" EndY="1" />
+                <MountPoint Side="Right" StartX="0" StartY="0" EndX="1" EndY="1" />
+                <MountPoint Side="Top" StartX="0" StartY="0" EndX="1" EndY="0.1" />
+                <MountPoint Side="Top" StartX="0" StartY="0.9" EndX="1" EndY="1" />
+                <MountPoint Side="Top" StartX="0" StartY="0.1" EndX="0.1" EndY="0.9" />
+                <MountPoint Side="Top" StartX="0.9" StartY="0.1" EndX="1" EndY="0.9" />
+            </MountPoints>
+            <BuildProgressModels>
+                <Model BuildPercentUpperBound="0.33" File="Models\Cubes\Large\HeatVentConstruction_1.mwm" />
+                <Model BuildPercentUpperBound="0.66" File="Models\Cubes\Large\HeatVentConstruction_2.mwm" />
+                <Model BuildPercentUpperBound="1.00" File="Models\Cubes\Large\HeatVentConstruction_3.mwm" />
+            </BuildProgressModels>
+            <BlockPairName>FSHeatSinkDLC</BlockPairName>
+            <EdgeType>Light</EdgeType>
+            <BuildTimeSeconds>20</BuildTimeSeconds>
+            <RequiredPowerInput>0.5</RequiredPowerInput>
+			<ResourceSinkGroup>Utility</ResourceSinkGroup>
+            <MirroringX>Y</MirroringX>
+            <MirroringY>X</MirroringY>
+            <DamageEffectName>Damage_WeapExpl_Damaged</DamageEffectName>
+            <DamagedSound>ParticleWeapExpl</DamagedSound>
+            <PCU>50</PCU>
+            <EmissiveMaterialName>Emissive</EmissiveMaterialName>
+            <LightDummyName>light</LightDummyName>
+            <LightFalloffBounds Min="0" Max="3" Default="1.3" />
+            <LightIntensityBounds Min="0.5" Max="10" Default="2" />
+            <LightRadiusBounds Min="1" Max="20" Default="3.6" />
+            <LightOffsetBounds Min="0" Max="5" Default="0.5" />
+            <IdleSound>BlockAirVentIdle</IdleSound>
+            <IsAirTight>true</IsAirTight>
+            <DLC>Warfare2</DLC>
+        </Definition>
+
+        <Definition xsi:type="MyObjectBuilder_UpgradeModuleDefinition">
+            <Id>
+                <TypeId>UpgradeModule</TypeId>
+                <SubtypeId>HeatSinkVentSmall</SubtypeId>
+            </Id>
+            <DisplayName>Heat Sink Vent</DisplayName>
+            <Icon>Textures\GUI\Icons\Cubes\HeatVent.dds</Icon>
+            <Description>Collects heat from an operational Frameshift Drive and radiates it into space to keep the drive operational for longer periods of time.
+Heat Capacity: 100
+Dissipation Rate: 2 Heat/sec
+Power Use: 125kw</Description>
+            <CubeSize>Small</CubeSize>
+            <BlockTopology>TriangleMesh</BlockTopology>
+            <Size x="1" y="1" z="1" />
+            <ModelOffset x="0" y="0" z="0" />
+            <Model>Models\Cubes\Small\HeatVent.mwm</Model>
+            <Components>
+                <Component Subtype="SteelPlate" Count="5" />
+                <Component Subtype="Construction" Count="5" />
+                <Component Subtype="Motor" Count="2" />
+                <Component Subtype="LargeTube" Count="1" />
+                <Component Subtype="SmallTube" Count="4" />
+                <Component Subtype="Computer" Count="3" />
+                <Component Subtype="SteelPlate" Count="3" />
+            </Components>
+            <CriticalComponent Subtype="Computer" Index="0" />
+            <MountPoints>
+                <MountPoint Side="Bottom" StartX="0" StartY="0" EndX="1" EndY="1" Default="true"/>
+                <MountPoint Side="Back" StartX="0" StartY="0" EndX="1" EndY="1" />
+                <MountPoint Side="Front" StartX="0" StartY="0" EndX="1" EndY="1" />
+                <MountPoint Side="Left" StartX="0" StartY="0" EndX="1" EndY="1" />
+                <MountPoint Side="Right" StartX="0" StartY="0" EndX="1" EndY="1" />
+                <MountPoint Side="Top" StartX="0" StartY="0" EndX="1" EndY="0.1" />
+                <MountPoint Side="Top" StartX="0" StartY="0.9" EndX="1" EndY="1" />
+                <MountPoint Side="Top" StartX="0" StartY="0.1" EndX="0.1" EndY="0.9" />
+                <MountPoint Side="Top" StartX="0.9" StartY="0.1" EndX="1" EndY="0.9" />
+            </MountPoints>
+            <BuildProgressModels>
+                <Model BuildPercentUpperBound="0.50" File="Models\Cubes\Small\HeatVentConstruction_1.mwm" />
+                <Model BuildPercentUpperBound="1.00" File="Models\Cubes\Small\HeatVentConstruction_2.mwm" />
+            </BuildProgressModels>
+            <BlockPairName>FSHeatSinkDLC</BlockPairName>
+            <EdgeType>Light</EdgeType>
+            <BuildTimeSeconds>8</BuildTimeSeconds>
+            <RequiredPowerInput>0.125</RequiredPowerInput>
+			<ResourceSinkGroup>Utility</ResourceSinkGroup>
+            <MirroringX>Y</MirroringX>
+            <MirroringY>X</MirroringY>
+            <DamageEffectName>Damage_WeapExpl_Damaged</DamageEffectName>
+            <DamagedSound>ParticleWeapExpl</DamagedSound>
+            <PCU>50</PCU>
+            <EmissiveMaterialName>Emissive</EmissiveMaterialName>
+            <LightDummyName>light</LightDummyName>
+            <LightFalloffBounds Min="0" Max="3" Default="1.3" />
+            <LightIntensityBounds Min="0.5" Max="10" Default="2" />
+            <LightRadiusBounds Min="1" Max="20" Default="3.6" />
+            <LightOffsetBounds Min="0" Max="5" Default="0.5" />
+            <IdleSound>BlockAirVentIdle</IdleSound>
+            <IsAirTight>true</IsAirTight>
+            <DLC>Warfare2</DLC>
+        </Definition>
+
+    </CubeBlocks>
+</Definitions>
