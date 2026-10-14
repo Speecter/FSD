@@ -386,6 +386,15 @@ namespace WarpDriveMod
                 newSystems.Clear();
         }
 
+        public override void Draw()
+        {
+            if (MyAPIGateway.Utilities.IsDedicated)
+                return;
+
+            foreach (WarpSystem s in warpSystems)
+                s.Draw();
+        }
+
         public WarpSystem GetGridWarpSystem(MyCubeGrid grid)
         {
             if (grid == null)
@@ -480,6 +489,9 @@ namespace WarpDriveMod
                 MyVisualScriptLogicProvider.PlayerDisconnected -= PlayerDisconnected;
 
                 exposureQueue.Clear();
+
+                foreach (WarpSystem s in warpSystems)
+                    MyAPIGateway.Session?.OxygenProviderSystem?.RemoveOxygenGenerator(s);
 
                 Settings.instance = null;
                 HeatSink.heatEnabled = true;
