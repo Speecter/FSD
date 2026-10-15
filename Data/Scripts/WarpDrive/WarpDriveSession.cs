@@ -22,7 +22,7 @@ namespace WarpDriveMod
         public static MySoundPair cruiseSpoolSound = new MySoundPair("quantum_charging", true);
         public static MySoundPair cruiseStartSound = new MySoundPair("quantum_jumpin", true);
         public static MySoundPair cruiseEndSound = new MySoundPair("quantum_jumpout", true);
-        public static MySoundPair cruiseOperatingSound = new MySoundPair("FSD_CruiseLoop", true); //placeholder audioID
+        public static MySoundPair cruiseOperatingSound = new MySoundPair("FTL_LowSpeed", true);
         public static MySoundPair cruiseSpoolSoundProto = new MySoundPair("FSD_ProtoCharging", true);
         public static MySoundPair cruiseStartSoundProto = new MySoundPair("FSD_Proto_JumpIn", true);
         public static MySoundPair cruiseEndSoundProto = new MySoundPair("FSD_Proto_JumpOut", true);

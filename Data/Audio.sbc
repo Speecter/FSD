@@ -333,5 +333,22 @@
         </Wave>
       </Waves>
     </Sound>
+    <Sound>
+      <Id>
+        <TypeId>MyObjectBuilder_AudioDefinition</TypeId>
+        <SubtypeId>FTL_LowSpeed</SubtypeId>
+      </Id>
+      <Category>SHIP</Category>
+      <Volume>0.85</Volume>
+      <MaxDistance>5000</MaxDistance>
+      <Loopable>true</Loopable>
+      <PitchVariation>0</PitchVariation>
+      <Waves>
+        <Wave Type="D3">
+          <Start>Audio\SC\FTL LowSpeed.wav</Start>
+          <Loop>Audio\SC\FTL LowSpeed.wav</Loop>
+        </Wave>
+      </Waves>
+    </Sound>
   </Sounds>
 </Definitions>

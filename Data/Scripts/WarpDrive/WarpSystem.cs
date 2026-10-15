@@ -61,6 +61,7 @@ namespace WarpDriveMod
         private readonly Dictionary<IMyGyro, float> gyroBlocks = new Dictionary<IMyGyro, float>();
         private MyParticleEffect effect;
         private readonly MyEntity3DSoundEmitter sound;
+        private readonly MyEntity3DSoundEmitter loopSound;
         private long startChargeRuntime;
         private long spoolFinishTick;
         private bool enemyInRange;
@@ -78,6 +79,30 @@ namespace WarpDriveMod
 
         public bool isPrototech = false;
         public const float EARTH_GRAVITY = 9.806652f;
+        public const double MIN_CRUISE_SPEED_MPS = 500.0;
+        public const double MIN_CRUISE_SPEED_PT = MIN_CRUISE_SPEED_MPS / 60.0;
+
+        public static string FormatSpeed(double speedPt)
+        {
+            double mps = Math.Max(0.0, speedPt * 60.0);
+            if (mps < 1000.0)
+                return $"{mps:0} m/s";
+            if (mps < 10000.0)
+                return $"{mps / 1000.0:0.0} km/s";
+            return $"{mps / 1000.0:0} km/s";
+        }
+
+        private void SetWarpPlayersSave(bool save)
+        {
+            foreach (var player in playersInWarpList)
+            {
+                if (player?.Character == null)
+                    continue;
+
+                if (player.Character.Save != save)
+                    player.Character.Save = save;
+            }
+        }
 
         public string warnPlanetIntHUD = "Planetary interference detected!";
         public string warnDamagedHUD = "FS Drive Offline or Damaged!";
@@ -121,6 +146,10 @@ namespace WarpDriveMod
             if (!MyAPIGateway.Utilities.IsDedicated && grid.mainGrid != null)
             {
                 sound = new MyEntity3DSoundEmitter(grid.mainGrid)
+                {
+                    CanPlayLoopSounds = true
+                };
+                loopSound = new MyEntity3DSoundEmitter(grid.mainGrid)
                 {
                     CanPlayLoopSounds = true
                 };
@@ -182,12 +211,18 @@ namespace WarpDriveMod
 
             if (warpState == State.active)
             {
-                if (!MyAPIGateway.Utilities.IsDedicated && sound != null)
+                if (!MyAPIGateway.Utilities.IsDedicated)
                 {
-                    sound.SetPosition(mainGrid.PositionComp.GetPosition());
+                    if (sound != null)
+                        sound.SetPosition(mainGrid.PositionComp.GetPosition());
 
-                    if (!sound.IsPlaying)
-                        sound.PlaySound(WarpSound.cruiseOperatingSound, true);
+                    if (loopSound != null)
+                    {
+                        loopSound.SetPosition(mainGrid.PositionComp.GetPosition());
+
+                        if (!loopSound.IsPlaying)
+                            loopSound.PlaySound(WarpSound.cruiseOperatingSound, true);
+                    }
                 }
 
                 if (InWarp() && currentSpeedPt > 1f)
@@ -454,6 +489,11 @@ namespace WarpDriveMod
                     sound.PlaySound(isPrototech ? WarpSound.cruiseStartSoundProto : WarpSound.cruiseStartSound, true);
                     sound.VolumeMultiplier = 1;
                 }
+
+                if (loopSound != null)
+                {
+                    loopSound.PlaySound(WarpSound.cruiseOperatingSound, true);
+                }
             }
         }
 
@@ -497,10 +537,35 @@ namespace WarpDriveMod
 
         private void ApplySpeedStep(int direction)
         {
-            currentSpeedPt += direction * ((isPrototech ? 2000d : 1000d) / 60d);
+            if (direction == 0)
+                return;
 
-            if (direction < 0 && currentSpeedPt < 1f)
-                currentSpeedPt = -5f;
+            double currentMps = currentSpeedPt * 60.0;
+            double maxAllowedMps = (inAllowedGravity ? Math.Min(Settings.instance.maxSpeed, Settings.instance.AllowInGravityMaxSpeed) : Settings.instance.maxSpeed) * 60.0;
+
+            if (direction < 0 && currentMps <= MIN_CRUISE_SPEED_MPS + 1.0)
+            {
+                currentSpeedPt = -5.0;
+                return;
+            }
+
+            double stepMps;
+            if (currentMps < 1500.0)
+                stepMps = isPrototech ? 100.0 : 50.0;
+            else if (currentMps < 5000.0)
+                stepMps = isPrototech ? 500.0 : 250.0;
+            else if (currentMps < 20000.0)
+                stepMps = isPrototech ? 2000.0 : 1000.0;
+            else
+                stepMps = isPrototech ? 5000.0 : 2500.0;
+
+            double newMps = currentMps + (direction * stepMps);
+
+            if (direction < 0 && newMps < MIN_CRUISE_SPEED_MPS)
+                newMps = MIN_CRUISE_SPEED_MPS;
+
+            newMps = MathHelper.Clamp(newMps, MIN_CRUISE_SPEED_MPS, maxAllowedMps);
+            currentSpeedPt = newMps / 60.0;
         }
 
         private void BroadcastSpeed()
@@ -555,6 +620,9 @@ namespace WarpDriveMod
 
             if (playerOxygenSnapshot.Count > 0)
                 MyAPIGateway.Session.OxygenProviderSystem.AddOxygenGenerator(this);
+
+            if (MyAPIGateway.Multiplayer.IsServer)
+                SetWarpPlayersSave(false);
         }
 
         public bool IsPlayerSeated(long characterEntityId)
@@ -755,7 +823,8 @@ namespace WarpDriveMod
 
             gridMatrix = grid.FindWorldMatrix(controlSeat);
 
-            currentSpeedPt = inAllowedGravity ? 1000 / 60d : Settings.instance.startSpeed;
+            double baseStart = inAllowedGravity ? 1000 / 60d : Settings.instance.startSpeed;
+            currentSpeedPt = Math.Max(MIN_CRUISE_SPEED_PT, baseStart);
 
             GetOnboardPlayers();
 
@@ -767,6 +836,11 @@ namespace WarpDriveMod
             {
                 sound.PlaySound(isPrototech ? WarpSound.cruiseStartSoundProto : WarpSound.cruiseStartSound, true);
                 sound.VolumeMultiplier = 1;
+            }
+
+            if (loopSound != null)
+            {
+                loopSound.PlaySound(WarpSound.cruiseOperatingSound, true);
             }
             }
 
@@ -833,12 +907,20 @@ namespace WarpDriveMod
             {
                 StopParticleEffect();
 
+                if (loopSound != null)
+                {
+                    if (mainGrid != null)
+                        loopSound.SetPosition(mainGrid.PositionComp.GetPosition());
+
+                    loopSound.StopSound(true);
+                }
+
                 if (sound != null)
                 {
                     if (mainGrid != null)
                 sound.SetPosition(mainGrid.PositionComp.GetPosition());
 
-                    sound.StopSound(warpState == State.active);
+                    sound.StopSound(true);
 
                     if (warpState == State.active)
                     {
@@ -865,8 +947,11 @@ namespace WarpDriveMod
             currentSpeedPt = Settings.GetShared().startSpeed;
             enemyInRange = false;
 
-                playersInWarpList.Clear();
-                playerOxygenSnapshot.Clear();
+            if (MyAPIGateway.Multiplayer.IsServer)
+                SetWarpPlayersSave(true);
+
+            playersInWarpList.Clear();
+            playerOxygenSnapshot.Clear();
             MyAPIGateway.Session?.OxygenProviderSystem?.RemoveOxygenGenerator(this);
 
             pilotId = 0;
@@ -1103,7 +1188,7 @@ namespace WarpDriveMod
                     bool enemyDelay = warpState == State.charging && settings.AllowToDetectEnemyGrids && enemyInRange;
 
                     if (warpState == State.active)
-                        SendMessage($"Speed: {currentSpeedPt * 60 / 1000:0} km/s", 1f, "White");
+                        SendMessage($"Speed: {FormatSpeed(currentSpeedPt)}", 1f, "White");
                     else if (enemyDelay)
                         SendMessage("Enemy Detected! Spooling Delayed!", 1f, "Red");
 
@@ -1245,6 +1330,17 @@ namespace WarpDriveMod
             }
 
             GyroNerfer(false);
+
+            if (!MyAPIGateway.Utilities.IsDedicated)
+            {
+                if (sound != null)
+                    sound.StopSound(true);
+                if (loopSound != null)
+                    loopSound.StopSound(true);
+            }
+
+            if (MyAPIGateway.Multiplayer.IsServer)
+                SetWarpPlayersSave(true);
 
             hyperspace?.Close();
             capitalFSD?.Close();
