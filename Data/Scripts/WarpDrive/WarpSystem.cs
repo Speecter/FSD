@@ -67,17 +67,15 @@ namespace WarpDriveMod
         public string warnIsStaticHUD = "Unable to move static grid!";
         public string warnOverheatHUD = "FS Drive overheated!";
         public string warnProximityHUD = "Can't Start FS Drive. Proximity Alert!";
-        public string warnCharacterHUD = "Can't Start FS Drive. Lifeform detected!";
-        public string warnNotSeatedHUD = "Emergency Stop! Occupant not seated";
-        public string warnDriveInUseHUD = "Another seat is piloting this grid";
+        public string warnCharacterHUD = "Emergency Stop! Lifeform detected!";
+        public string warnNotSeatedHUD = "Emergency Stop! Occupant not seated!";
+        public string warnDriveInUseHUD = "Another seat is piloting this grid!";
         public string warnRestabilizingHUD = "FS Drive Restabilizing...";
-        public string warnConnectionHUD = "Emergency Stop! Connection changes detected";
-        public string warnCoolingHUD = "Cannot start FS Drive. Another drive is still cooling";
+        public string warnConnectionHUD = "Emergency Stop! Connection changes detected!";
+        public string warnCoolingHUD = "Cannot start FS Drive. Another drive is still cooling!";
 
         private const float heatPerMWDivisor = 100f;
         private const float heatPerMWDivisorPrototech = 150f;
-        private const float smallRatio = 1f / 5f;
-        private bool isSmall => grid?.mainGrid?.GridSizeEnum == MyCubeSize.Small;
         private bool inAllowedGravity => Settings.instance.AllowInGravity && GridGravityNow() > 0;
 
         public WarpSystem(WarpDrive block)
@@ -678,7 +676,7 @@ namespace WarpDriveMod
             UpdateHeatStats(true);
 
             bool prototech = IsPrototech(drive);
-            float capacity = GetHeatCapacity(prototech, cachedActiveSinks, cachedActiveSmallSinks);
+            float capacity = GetHeatCapacity(drive, cachedActiveSinks, cachedActiveSmallSinks);
 
             if (totalHeat > drive.heat)
             {
@@ -1064,7 +1062,7 @@ namespace WarpDriveMod
                                 drive.heat = Math.Min(drive.heat + heatGenerationRate, heatCapacity);
 
                             totalHeat += drive.heat;
-                            driveHeat = Math.Max(driveHeat, (int)(drive.heat / GetHeatCapacity(IsPrototech(drive), cachedActiveSinks, cachedActiveSmallSinks) * 100));
+                            driveHeat = Math.Max(driveHeat, (int)(drive.heat / GetHeatCapacity(drive, cachedActiveSinks, cachedActiveSmallSinks) * 100));
                         }
                     }
                 }
@@ -1119,32 +1117,41 @@ namespace WarpDriveMod
                 / (IsSmallDrive(drive) ? settings.powerRequirementBySpeedDeviderSmall : settings.powerRequirementBySpeedDeviderLarge);
         }
 
-        private float GetHeatCapacity(bool prototech, int sinks, int smallSinks)
+        private float GetHeatCapacity(WarpDrive drive, int sinks, int smallSinks)
         {
-            float capacityPerSink = Settings.instance?.HeatSinkCapacityBonus ?? 50f;
+            float capacityPerSink = Settings.instance?.HeatSinkCapacityBonus ?? 80f;
+            bool small = IsSmallDrive(drive);
 
-            return Math.Max(0f, (prototech ? 300f : 200f) * (isSmall ? smallRatio : 1f) * (Settings.instance?.maxHeat ?? 1f)
-                + (((sinks - smallSinks) * capacityPerSink) + (smallSinks * capacityPerSink * smallRatio)));
+            return Math.Max(0f, (IsPrototech(drive) ? (small ? 75f : 400f) : (small ? 50f : 250f)) * (Settings.instance?.maxHeat ?? 1f)
+                + (sinks - smallSinks) * capacityPerSink + smallSinks * capacityPerSink * 0.2f);
         }
 
         private void UpdateHeatStats(bool apply)
         {
             cachedActiveSinks = grid.CountActiveSinks(out cachedActiveSmallSinks, apply);
-            heatCapacity = GetHeatCapacity(isPrototech, cachedActiveSinks, cachedActiveSmallSinks);
-            heatDissipationRate = (cachedActiveSinks - cachedActiveSmallSinks + cachedActiveSmallSinks * smallRatio) * Settings.instance.HeatSinkDissipation
-                + Settings.instance.heatDissipationDrive * (isSmall ? smallRatio : 1f);
+            heatCapacity = GetHeatCapacity(primaryDrive, cachedActiveSinks, cachedActiveSmallSinks);
+
+            float driveCooling = 0f;
+            foreach (HashSet<WarpDrive> gridDrives in warpDrives.Values)
+            {
+                foreach (WarpDrive drive in gridDrives)
+                    driveCooling = Math.Max(driveCooling, IsSmallDrive(drive) ? 0.25f : 1f);
+            }
+
+            heatDissipationRate = (cachedActiveSinks - cachedActiveSmallSinks + cachedActiveSmallSinks * 0.2f) * Settings.instance.HeatSinkDissipation
+                + Settings.instance.heatDissipationDrive * driveCooling;
         }
 
         public void HeatInfo(WarpDrive drive, out float capacity, out float breakEvenPower)
         {   // Terminal UI info
-            bool prototech = warpState == State.idle ? IsPrototech(drive) : isPrototech;
+            WarpDrive shownDrive = warpState == State.idle ? drive : primaryDrive;
 
             if (isSleeping && grid != null)
                 UpdateHeatStats(false);
 
-            capacity = GetHeatCapacity(prototech, cachedActiveSinks, cachedActiveSmallSinks);
+            capacity = GetHeatCapacity(shownDrive, cachedActiveSinks, cachedActiveSmallSinks);
             breakEvenPower = Settings.instance.heatGain > 0f
-                ? heatDissipationRate * 60f * (prototech ? heatPerMWDivisorPrototech : heatPerMWDivisor) / Settings.instance.heatGain
+                ? heatDissipationRate * 60f * (IsPrototech(shownDrive) ? heatPerMWDivisorPrototech : heatPerMWDivisor) / Settings.instance.heatGain
                 : 0f;
         }
 
