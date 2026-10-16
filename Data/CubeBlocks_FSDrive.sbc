@@ -12,8 +12,8 @@
       <Description>Compact version of the S7 drive. Only one drive is active at a time per grid.
 Top speed: 50km/s
 Heat gen rate: 1/sec per 10mw in use
-Heat capacity: 400
-Heat dissipation rate: 2/sec
+Heat capacity: 500
+Heat dissipation rate: 7.5/sec
 Gravity Glide max speed: 3km/s
 Gravity Glide max gravity 0.2G</Description>
       <CubeSize>Small</CubeSize>
@@ -75,8 +75,8 @@ Gravity Glide max gravity 0.2G</Description>
       <Description>Friendship Drive charging! Only one drive is active at a time per grid.
 Top speed: 50km/s
 Heat gen rate: 1/sec per 10mw in use
-Heat capacity: 2000
-Heat dissipation rate: 10/sec
+Heat capacity: 2500
+Heat dissipation rate: 30/sec
 Gravity Glide max speed: 3km/s
 Gravity Glide max gravity 0.2G</Description>
       <CubeSize>Large</CubeSize>
@@ -138,8 +138,8 @@ Gravity Glide max gravity 0.2G</Description>
       <Description>Friendship Drive charging! Only one drive is active at a time per grid.
 Top speed: 50km/s
 Heat gen rate: 1/sec per 10mw in use
-Heat capacity: 2000
-Heat dissipation rate: 10/sec
+Heat capacity: 2500
+Heat dissipation rate: 30/sec
 Gravity Glide max speed: 3km/s
 Gravity Glide max gravity 0.2G</Description>
       <CubeSize>Large</CubeSize>
@@ -210,8 +210,8 @@ Gravity Glide max gravity 0.2G</Description>
       <Description>Prototech-outfitted S7 FSD. Only one drive is active at a time per grid.
 Top speed: 50km/s
 Heat gen rate: 1/sec per 15mw in use
-Heat capacity: 3000
-Heat dissipation rate: 10/sec
+Heat capacity: 4000
+Heat dissipation rate: 30/sec
 Gravity Glide max speed: 3km/s
 Gravity Glide max gravity 0.2G</Description>
       <CubeSize>Large</CubeSize>
@@ -290,8 +290,8 @@ Gravity Glide max gravity 0.2G</Description>
       <Description>Prototech-outfitted D5 FSD. Only one drive is active at a time per grid.
 Top speed: 50km/s
 Heat gen rate: 1/sec per 15mw in use
-Heat capacity: 600
-Heat dissipation rate: 2/sec
+Heat capacity: 750
+Heat dissipation rate: 7.5/sec
 Gravity Glide max speed: 3km/s
 Gravity Glide max gravity 0.2G</Description>
       <CubeSize>Small</CubeSize>
