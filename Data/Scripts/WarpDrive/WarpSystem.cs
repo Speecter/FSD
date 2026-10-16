@@ -27,6 +27,7 @@ namespace WarpDriveMod
         public event Action<WarpSystem> OnSystemInvalidatedAction;
         public List<IMyPlayer> onlinePlayers = new List<IMyPlayer>();
         public double currentSpeedPt = Settings.GetShared().startSpeed;
+        public double throttleRatio = 0.0;
         public int driveHeat { get; set; }
         public float heatGenerationRate { get; private set; }
         public float heatDissipationRate { get; private set; }
@@ -82,6 +83,12 @@ namespace WarpDriveMod
         public const double MIN_CRUISE_SPEED_MPS = 500.0;
         public const double MIN_CRUISE_SPEED_PT = MIN_CRUISE_SPEED_MPS / 60.0;
 
+        public const double SPACE_LOW_DECK_MPS = 2500.0;
+        public const double GRAVITY_LOW_DECK_MPS = 500.0;
+        public const double GRAVITY_HIGH_DECK_MPS = 2500.0;
+
+        private static readonly Dictionary<long, float> _planetSurfaceGravCache = new Dictionary<long, float>();
+
         public static string FormatSpeed(double speedPt)
         {
             double mps = Math.Max(0.0, speedPt * 60.0);
@@ -111,17 +118,15 @@ namespace WarpDriveMod
         public string warnIsStaticHUD = "Unable to move static grid!";
         public string warnOverheatHUD = "FS Drive overheated!";
         public string warnProximityHUD = "Can't Start FS Drive. Proximity Alert!";
-        public string warnCharacterHUD = "Can't Start FS Drive. Lifeform detected!";
-        public string warnNotSeatedHUD = "Emergency Stop! Occupant not seated";
-        public string warnDriveInUseHUD = "Another seat is piloting this grid";
+        public string warnCharacterHUD = "Emergency Stop! Lifeform detected!";
+        public string warnNotSeatedHUD = "Emergency Stop! Occupant not seated!";
+        public string warnDriveInUseHUD = "Another seat is piloting this grid!";
         public string warnRestabilizingHUD = "FS Drive Restabilizing...";
-        public string warnConnectionHUD = "Emergency Stop! Connection changes detected";
-        public string warnCoolingHUD = "Cannot start FS Drive. Another drive is still cooling";
+        public string warnConnectionHUD = "Emergency Stop! Connection changes detected!";
+        public string warnCoolingHUD = "Cannot start FS Drive. Another drive is still cooling!";
 
         private const float heatPerMWDivisor = 100f;
         private const float heatPerMWDivisorPrototech = 150f;
-        private const float smallRatio = 1f / 5f;
-        private bool isSmall => grid?.mainGrid?.GridSizeEnum == MyCubeSize.Small;
         private bool inAllowedGravity => Settings.instance.AllowInGravity && GridGravityNow() > 0;
 
         public WarpSystem(WarpDrive block)
@@ -257,6 +262,19 @@ namespace WarpDriveMod
             if (!MyAPIGateway.Multiplayer.IsServer)
             {
                 ClientSpeedInput();
+
+                if (currentSpeedPt <= -1f)
+                {
+                    Dewarp();
+                    primaryDrive?.IsRestabilizing();
+                    return false;
+                }
+
+                double tClient = GetGravityInfluenceFactor();
+                double lowClient = GetCurrentLowDeckMps(tClient);
+                double highClient = GetCurrentHighDeckMps(tClient);
+                currentSpeedPt = MathHelper.Lerp(lowClient, highClient, throttleRatio) / 60.0;
+
                 return true;
             }
 
@@ -309,15 +327,18 @@ namespace WarpDriveMod
             if (!MyAPIGateway.Utilities.IsDedicated)
                 ClientSpeedInput();
 
-            currentSpeedPt = Math.Min(currentSpeedPt, inAllowedGravity ? Math.Min(Settings.instance.maxSpeed, Settings.instance.AllowInGravityMaxSpeed) : Settings.instance.maxSpeed);
-
             if (currentSpeedPt <= -1f)
             {
                 Dewarp();
                 primaryDrive?.IsRestabilizing();
 
-                    return false;
-                }
+                return false;
+            }
+
+            double t = GetGravityInfluenceFactor();
+            double lowDeckMps = GetCurrentLowDeckMps(t);
+            double highDeckMps = GetCurrentHighDeckMps(t);
+            currentSpeedPt = MathHelper.Lerp(lowDeckMps, highDeckMps, throttleRatio) / 60.0;
 
             if (WarpDriveSession.instance.runtime % 11 == 0)
                 BroadcastSpeed();
@@ -474,6 +495,10 @@ namespace WarpDriveMod
             }
 
             currentSpeedPt = message.speed;
+            double tState = GetGravityInfluenceFactor();
+            double lowState = GetCurrentLowDeckMps(tState);
+            double highState = GetCurrentHighDeckMps(tState);
+            throttleRatio = MathHelper.Clamp((message.speed * 60.0 - lowState) / Math.Max(1.0, highState - lowState), 0.0, 1.0);
 
             if (warpState != State.active)
             {
@@ -541,9 +566,11 @@ namespace WarpDriveMod
                 return;
 
             double currentMps = currentSpeedPt * 60.0;
-            double maxAllowedMps = (inAllowedGravity ? Math.Min(Settings.instance.maxSpeed, Settings.instance.AllowInGravityMaxSpeed) : Settings.instance.maxSpeed) * 60.0;
+            double t = GetGravityInfluenceFactor();
+            double currentLowMps = GetCurrentLowDeckMps(t);
+            double currentHighMps = GetCurrentHighDeckMps(t);
 
-            if (direction < 0 && currentMps <= MIN_CRUISE_SPEED_MPS + 1.0)
+            if (direction < 0 && currentMps <= currentLowMps + 1.0)
             {
                 currentSpeedPt = -5.0;
                 return;
@@ -561,11 +588,12 @@ namespace WarpDriveMod
 
             double newMps = currentMps + (direction * stepMps);
 
-            if (direction < 0 && newMps < MIN_CRUISE_SPEED_MPS)
-                newMps = MIN_CRUISE_SPEED_MPS;
+            if (direction < 0 && newMps < currentLowMps)
+                newMps = currentLowMps;
 
-            newMps = MathHelper.Clamp(newMps, MIN_CRUISE_SPEED_MPS, maxAllowedMps);
+            newMps = MathHelper.Clamp(newMps, currentLowMps, currentHighMps);
             currentSpeedPt = newMps / 60.0;
+            throttleRatio = MathHelper.Clamp((newMps - currentLowMps) / Math.Max(1.0, currentHighMps - currentLowMps), 0.0, 1.0);
         }
 
         private void BroadcastSpeed()
@@ -587,6 +615,10 @@ namespace WarpDriveMod
                 return;
 
             currentSpeedPt = speed;
+            double t = GetGravityInfluenceFactor();
+            double lowMps = GetCurrentLowDeckMps(t);
+            double highMps = GetCurrentHighDeckMps(t);
+            throttleRatio = MathHelper.Clamp((speed * 60.0 - lowMps) / Math.Max(1.0, highMps - lowMps), 0.0, 1.0);
         }
 
         public bool Contains(WarpDrive drive)
@@ -773,7 +805,7 @@ namespace WarpDriveMod
             UpdateHeatStats(true);
 
             bool prototech = IsPrototech(drive);
-            float capacity = GetHeatCapacity(prototech, cachedActiveSinks, cachedActiveSmallSinks);
+            float capacity = GetHeatCapacity(drive, cachedActiveSinks, cachedActiveSmallSinks);
 
             if (totalHeat > drive.heat)
             {
@@ -823,8 +855,13 @@ namespace WarpDriveMod
 
             gridMatrix = grid.FindWorldMatrix(controlSeat);
 
-            double baseStart = inAllowedGravity ? 1000 / 60d : Settings.instance.startSpeed;
-            currentSpeedPt = Math.Max(MIN_CRUISE_SPEED_PT, baseStart);
+            double t = GetGravityInfluenceFactor();
+            double localLowMps = GetCurrentLowDeckMps(t);
+            double localHighMps = GetCurrentHighDeckMps(t);
+            double baseStartMps = inAllowedGravity ? 1000.0 : ((Settings.instance?.startSpeed ?? (1000.0 / 60.0)) * 60.0);
+            double clampedStartMps = MathHelper.Clamp(baseStartMps, localLowMps, localHighMps);
+            currentSpeedPt = clampedStartMps / 60.0;
+            throttleRatio = MathHelper.Clamp((clampedStartMps - localLowMps) / Math.Max(1.0, localHighMps - localLowMps), 0.0, 1.0);
 
             GetOnboardPlayers();
 
@@ -945,6 +982,7 @@ namespace WarpDriveMod
             }
 
             currentSpeedPt = Settings.GetShared().startSpeed;
+            throttleRatio = 0.0;
             enemyInRange = false;
 
             if (MyAPIGateway.Multiplayer.IsServer)
@@ -1046,17 +1084,14 @@ namespace WarpDriveMod
         public bool IsInGravity()
         {
             if (grid?.mainGrid == null)
-                    return true;
+                return true;
 
             float gravity = GridGravityNow();
 
             if (!Settings.instance.AllowInGravity)
-                return gravity > 0.01;
+                return gravity > 0.01f;
 
-            if (gravity > Settings.instance.AllowInGravityMax)
-                return true;
-
-            if (gravity <= 0 || grid.mainGrid.Physics == null)
+            if (gravity <= 0f || grid.mainGrid.Physics == null)
                 return false;
 
             BoundingBoxD worldAABB = grid.mainGrid.PositionComp.WorldAABB;
@@ -1065,8 +1100,98 @@ namespace WarpDriveMod
                 return false;
 
             Vector3D centerOfMassWorld = grid.mainGrid.Physics.CenterOfMassWorld;
-            return Vector3D.Distance(closestPlanet.GetClosestSurfacePointGlobal(ref centerOfMassWorld), centerOfMassWorld) < Settings.instance.AllowInGravityMinAltitude;
+            Vector3D planetCenter = closestPlanet.PositionComp.GetPosition();
+            Vector3D closestSurface = closestPlanet.GetClosestSurfacePointGlobal(ref centerOfMassWorld);
+            double altitude = (centerOfMassWorld - planetCenter).Length() - (closestSurface - planetCenter).Length();
+
+            double requiredDropAltitude = GetProportionalDropAltitude(closestPlanet, centerOfMassWorld);
+            return altitude < requiredDropAltitude;
         }
+
+        public static float GetPlanetSurfaceGravity(MyPlanet planet)
+        {
+            if (planet == null) return 1.0f;
+            float surfaceGrav;
+            if (!_planetSurfaceGravCache.TryGetValue(planet.EntityId, out surfaceGrav))
+            {
+                if (planet.Generator != null && planet.Generator.SurfaceGravity > 0f)
+                {
+                    surfaceGrav = planet.Generator.SurfaceGravity;
+                }
+                else
+                {
+                    Vector3D center = planet.PositionComp.GetPosition();
+                    Vector3D testPos = center + Vector3D.Up * Math.Max(planet.AverageRadius, 1000.0);
+                    Vector3D surfacePoint = planet.GetClosestSurfacePointGlobal(ref testPos);
+                    float naturalInterference;
+                    surfaceGrav = MyAPIGateway.Physics.CalculateNaturalGravityAt(surfacePoint, out naturalInterference).Length() / EARTH_GRAVITY;
+                    if (surfaceGrav <= 0.01f) surfaceGrav = 1.0f;
+                }
+                _planetSurfaceGravCache[planet.EntityId] = surfaceGrav;
+            }
+            return surfaceGrav;
+        }
+
+        public double GetProportionalDropAltitude(MyPlanet planet, Vector3D shipPos)
+        {
+            if (planet == null) return Settings.instance?.AllowInGravityMinAltitude ?? 1500.0;
+
+            Vector3D planetCenter = planet.PositionComp.GetPosition();
+            Vector3D surfacePoint = planet.GetClosestSurfacePointGlobal(ref shipPos);
+            double surfaceRadius = (surfacePoint - planetCenter).Length();
+
+            double calculatedDropAlt;
+            if (planet.HasAtmosphere && planet.AtmosphereRadius > surfaceRadius + 500.0)
+            {
+                // 1/4 of atmosphere height above local terrain
+                double atmoHeight = planet.AtmosphereRadius - surfaceRadius;
+                calculatedDropAlt = atmoHeight * 0.25;
+            }
+            else
+            {
+                // Airless Moons: 4% of radius, eliminating low-G doorstep exploit
+                calculatedDropAlt = planet.AverageRadius * 0.04;
+            }
+
+            double minSafetyFloor = Math.Max(1500.0, Settings.instance?.AllowInGravityMinAltitude ?? 1500.0);
+            return Math.Max(calculatedDropAlt, minSafetyFloor);
+        }
+
+        public double GetGravityInfluenceFactor()
+        {
+            if (grid?.mainGrid == null) return 0.0;
+            float currentG = GridGravityNow();
+            if (currentG <= 0.001f) return 0.0;
+
+            BoundingBoxD worldAABB = grid.mainGrid.PositionComp.WorldAABB;
+            MyPlanet planet = MyGamePruningStructure.GetClosestPlanet(ref worldAABB);
+            float surfaceG = GetPlanetSurfaceGravity(planet);
+
+            double ratio = MathHelper.Clamp((double)(currentG / surfaceG), 0.0, 1.0);
+            return Math.Pow(ratio, 0.285);
+        }
+
+        public double GetCurrentLowDeckMps()
+        {
+            return GetCurrentLowDeckMps(GetGravityInfluenceFactor());
+        }
+
+        public double GetCurrentLowDeckMps(double t)
+        {
+            return MathHelper.Lerp(SPACE_LOW_DECK_MPS, GRAVITY_LOW_DECK_MPS, t);
+        }
+
+        public double GetCurrentHighDeckMps()
+        {
+            return GetCurrentHighDeckMps(GetGravityInfluenceFactor());
+        }
+
+        public double GetCurrentHighDeckMps(double t)
+        {
+            double spaceMaxMps = Math.Max(GRAVITY_HIGH_DECK_MPS, (Settings.instance?.maxSpeed ?? (50000.0 / 60.0)) * 60.0);
+            return MathHelper.Lerp(spaceMaxMps, GRAVITY_HIGH_DECK_MPS, t);
+        }
+
 
         public float GridGravityNow()
         {
@@ -1145,7 +1270,13 @@ namespace WarpDriveMod
                     if (!primaryDrive.hasPower)
                     {
                         if (currentSpeedPt > 90)
+                        {
                             currentSpeedPt -= 90f;
+                            double t = GetGravityInfluenceFactor();
+                            double lowMps = GetCurrentLowDeckMps(t);
+                            double highMps = GetCurrentHighDeckMps(t);
+                            throttleRatio = MathHelper.Clamp((currentSpeedPt * 60.0 - lowMps) / Math.Max(1.0, highMps - lowMps), 0.0, 1.0);
+                        }
                         else
                             hasEnoughPower = false;
                     }
@@ -1176,7 +1307,7 @@ namespace WarpDriveMod
                                 drive.heat = Math.Min(drive.heat + heatGenerationRate, heatCapacity);
 
                             totalHeat += drive.heat;
-                            driveHeat = Math.Max(driveHeat, (int)(drive.heat / GetHeatCapacity(IsPrototech(drive), cachedActiveSinks, cachedActiveSmallSinks) * 100));
+                            driveHeat = Math.Max(driveHeat, (int)(drive.heat / GetHeatCapacity(drive, cachedActiveSinks, cachedActiveSmallSinks) * 100));
                         }
                     }
                 }
@@ -1231,32 +1362,41 @@ namespace WarpDriveMod
                 / (IsSmallDrive(drive) ? settings.powerRequirementBySpeedDeviderSmall : settings.powerRequirementBySpeedDeviderLarge);
         }
 
-        private float GetHeatCapacity(bool prototech, int sinks, int smallSinks)
+        private float GetHeatCapacity(WarpDrive drive, int sinks, int smallSinks)
         {
-            float capacityPerSink = Settings.instance?.HeatSinkCapacityBonus ?? 50f;
+            float capacityPerSink = Settings.instance?.HeatSinkCapacityBonus ?? 80f;
+            bool small = IsSmallDrive(drive);
 
-            return Math.Max(0f, (prototech ? 300f : 200f) * (isSmall ? smallRatio : 1f) * (Settings.instance?.maxHeat ?? 1f)
-                + (((sinks - smallSinks) * capacityPerSink) + (smallSinks * capacityPerSink * smallRatio)));
+            return Math.Max(0f, (IsPrototech(drive) ? (small ? 75f : 400f) : (small ? 50f : 250f)) * (Settings.instance?.maxHeat ?? 1f)
+                + (sinks - smallSinks) * capacityPerSink + smallSinks * capacityPerSink * 0.2f);
         }
 
         private void UpdateHeatStats(bool apply)
         {
             cachedActiveSinks = grid.CountActiveSinks(out cachedActiveSmallSinks, apply);
-            heatCapacity = GetHeatCapacity(isPrototech, cachedActiveSinks, cachedActiveSmallSinks);
-            heatDissipationRate = (cachedActiveSinks - cachedActiveSmallSinks + cachedActiveSmallSinks * smallRatio) * Settings.instance.HeatSinkDissipation
-                + Settings.instance.heatDissipationDrive * (isSmall ? smallRatio : 1f);
+            heatCapacity = GetHeatCapacity(primaryDrive, cachedActiveSinks, cachedActiveSmallSinks);
+
+            float driveCooling = 0f;
+            foreach (HashSet<WarpDrive> gridDrives in warpDrives.Values)
+            {
+                foreach (WarpDrive drive in gridDrives)
+                    driveCooling = Math.Max(driveCooling, IsSmallDrive(drive) ? 0.25f : 1f);
+            }
+
+            heatDissipationRate = (cachedActiveSinks - cachedActiveSmallSinks + cachedActiveSmallSinks * 0.2f) * Settings.instance.HeatSinkDissipation
+                + Settings.instance.heatDissipationDrive * driveCooling;
         }
 
         public void HeatInfo(WarpDrive drive, out float capacity, out float breakEvenPower)
         {   // Terminal UI info
-            bool prototech = warpState == State.idle ? IsPrototech(drive) : isPrototech;
+            WarpDrive shownDrive = warpState == State.idle ? drive : primaryDrive;
 
             if (isSleeping && grid != null)
                 UpdateHeatStats(false);
 
-            capacity = GetHeatCapacity(prototech, cachedActiveSinks, cachedActiveSmallSinks);
+            capacity = GetHeatCapacity(shownDrive, cachedActiveSinks, cachedActiveSmallSinks);
             breakEvenPower = Settings.instance.heatGain > 0f
-                ? heatDissipationRate * 60f * (prototech ? heatPerMWDivisorPrototech : heatPerMWDivisor) / Settings.instance.heatGain
+                ? heatDissipationRate * 60f * (IsPrototech(shownDrive) ? heatPerMWDivisorPrototech : heatPerMWDivisor) / Settings.instance.heatGain
                 : 0f;
         }
 

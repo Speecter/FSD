@@ -13,6 +13,8 @@
       <Description>Class B Frameshift Drive (Supercruise only). Compact model for small grids. Only one drive is active at a time per grid.
 Modes: Supercruise
 Top Speed: 50km/s
+Heat Capacity: 500
+Heat Dissipation: 7.5/sec
 Minimum power use: 20MW
 Gravity Glide max speed: 3km/s
 Gravity Glide max gravity: 0.2G</Description>
@@ -76,6 +78,8 @@ Gravity Glide max gravity: 0.2G</Description>
       <Description>Class A Frameshift Drive (Supercruise and Hyperspace capable). Compact model for small grids. Only one drive is active at a time per grid.
 Modes: Supercruise, Hyperspace
 Top Speed: 50km/s
+Heat Capacity: 500
+Heat Dissipation: 7.5/sec
 Minimum power use: 20MW
 Gravity Glide max speed: 3km/s
 Gravity Glide max gravity: 0.2G</Description>
@@ -139,6 +143,8 @@ Gravity Glide max gravity: 0.2G</Description>
       <Description>Class B Frameshift Drive (Supercruise only). Standard model for large grids. Only one drive is active at a time per grid.
 Modes: Supercruise
 Top Speed: 50km/s
+Heat Capacity: 2500
+Heat Dissipation: 30/sec
 Minimum power use: 20MW
 Gravity Glide max speed: 3km/s
 Gravity Glide max gravity: 0.2G</Description>
@@ -202,6 +208,8 @@ Gravity Glide max gravity: 0.2G</Description>
       <Description>Class A Frameshift Drive (Supercruise and Hyperspace capable). Standard model for large grids. Only one drive is active at a time per grid.
 Modes: Supercruise, Hyperspace
 Top Speed: 50km/s
+Heat Capacity: 2500
+Heat Dissipation: 30/sec
 Minimum power use: 20MW
 Gravity Glide max speed: 3km/s
 Gravity Glide max gravity: 0.2G</Description>
@@ -265,6 +273,8 @@ Gravity Glide max gravity: 0.2G</Description>
       <Description>Class B Frameshift Drive Type II (Supercruise only). Only one drive is active at a time per grid.
 Modes: Supercruise
 Top Speed: 50km/s
+Heat Capacity: 2500
+Heat Dissipation: 30/sec
 Minimum power use: 20MW
 Gravity Glide max speed: 3km/s
 Gravity Glide max gravity: 0.2G</Description>
@@ -337,6 +347,8 @@ Gravity Glide max gravity: 0.2G</Description>
       <Description>Class A Frameshift Drive Type II (Supercruise and Hyperspace capable). Only one drive is active at a time per grid.
 Modes: Supercruise, Hyperspace
 Top Speed: 50km/s
+Heat Capacity: 2500
+Heat Dissipation: 30/sec
 Minimum power use: 20MW
 Gravity Glide max speed: 3km/s
 Gravity Glide max gravity: 0.2G</Description>
@@ -410,6 +422,8 @@ Gravity Glide max gravity: 0.2G</Description>
       <Description>Class A Prototech-outfitted Frameshift Drive. High performance drive for large grids. Only one drive is active at a time per grid.
 Modes: Supercruise, Hyperspace
 Top Speed: 50km/s
+Heat Capacity: 4000
+Heat Dissipation: 30/sec
 Minimum power use: 20MW
 Gravity Glide max speed: 3km/s
 Gravity Glide max gravity: 0.2G</Description>
@@ -491,6 +505,8 @@ Gravity Glide max gravity: 0.2G</Description>
       <Description>Class S Prototech-outfitted Frameshift Drive. Superior performance drive for large grids. Only one drive is active at a time per grid.
 Modes: Supercruise, Hyperspace
 Top Speed: 50km/s
+Heat Capacity: 4000
+Heat Dissipation: 30/sec
 Minimum power use: 20MW
 Gravity Glide max speed: 3km/s
 Gravity Glide max gravity: 0.2G</Description>
@@ -651,6 +667,8 @@ Spool-up Charge: 48s</Description>
       <Description>Class A Prototech-outfitted Frameshift Drive. High performance compact drive for small grids. Only one drive is active at a time per grid.
 Modes: Supercruise, Hyperspace
 Top Speed: 50km/s
+Heat Capacity: 750
+Heat Dissipation: 7.5/sec
 Minimum power use: 20MW
 Gravity Glide max speed: 3km/s
 Gravity Glide max gravity: 0.2G</Description>
@@ -731,6 +749,8 @@ Gravity Glide max gravity: 0.2G</Description>
       <Description>Class S Prototech-outfitted Frameshift Drive. Superior performance compact drive for small grids. Only one drive is active at a time per grid.
 Modes: Supercruise, Hyperspace
 Top Speed: 50km/s
+Heat Capacity: 750
+Heat Dissipation: 7.5/sec
 Minimum power use: 20MW
 Gravity Glide max speed: 3km/s
 Gravity Glide max gravity: 0.2G</Description>

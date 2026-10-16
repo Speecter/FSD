@@ -25,9 +25,10 @@
       <Volume>0.8</Volume>
       <MaxDistance>5000</MaxDistance>
       <Loopable>false</Loopable>
+      <Pitch>2</Pitch>
       <Waves>
         <Wave Type="D3">
-          <Start>Audio\SC\GlideLeaving.xwm</Start>
+          <Start>Audio\SC\GlideLeaving.wav</Start>
         </Wave>
       </Waves>
     </Sound>
@@ -40,6 +41,7 @@
       <Volume>0.8</Volume>
       <MaxDistance>5000</MaxDistance>
       <Loopable>false</Loopable>
+      <Pitch>2</Pitch>
       <Waves>
         <Wave Type="D3">
           <Start>Audio\SC\GlideEntering.xwm</Start>

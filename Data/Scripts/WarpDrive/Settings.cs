@@ -87,7 +87,7 @@ namespace WarpDriveMod
                 startSpeed = 1000 / 60d, //Initial cruise speed in km/s. Allows up to maxSpeed. Default is 1km/s.
                 maxHeat = 1f, //Multiplier for FSD heat capacities. Does not affect Heat Sinks. Default is 1.
                 heatGain = 1f, //Multiplier for global heat generation. Set to 0 to disable heat entirely. Default is 1.
-                heatDissipationDrive = 1 / 60f, //Heat/sec FSD dissipation rate. Does not affect Heat Sink dissipation. SG is 1/5 of this. This value is 10x ingame. Default is 1.
+                heatDissipationDrive = 3 / 60f, //Heat/sec FSD dissipation rate. Does not affect Heat Sink dissipation. SG is 1/4 of this. This value is 10x ingame. Default is 3.
                 baseRequiredPower = 20f, //The absolute minimum power a LG drive can use to spool. Measured in MW. Default is 20.
                 baseRequiredPowerSmall = 20f, //The absolute minimum power a SG drive can use to spool. Measured in MW. Default is 20.
                 powerRequirementMultiplier = 2, //Power multiplier for higher speeds while actively cruising. Default is 2.
@@ -101,9 +101,9 @@ namespace WarpDriveMod
                 PrototechJump = 5, //Spooling time for Prototech drives. Max 90s, min 3s. Default is 5s.
                 AllowInGravityMax = 0.2f, //Maximum allowed gravity if "AllowInGravity=true". Default is 0.2g.
                 AllowInGravityMaxSpeed = 3000 / 60d, //Maximum allowed speed in km/s while in gravity if "AllowInGravity=true". Don't set too high or performance may degrade. Default is 3km/s.
-                AllowInGravityMinAltitude = 3000d, //Minimum allowed altitude on planets in meters if "AllowInGravityMax" doesn't stop you first. Bare minimum allowed is 300m. Default is 3000m.
-                HeatSinkDissipation = 1 / 60f, //Heat/sec Heat Sink dissipation rate. Does not affect FSD dissipation. SG is 1/5 of this. This value is 10x ingame. Default is 1.
-                HeatSinkCapacityBonus = 50f, //Flat heat capacity added per active vent. SG is 1/5 of this. This value is 10x ingame. Default is 50.
+                AllowInGravityMinAltitude = 1500d, //Minimum safety floor altitude on planets in meters. Default is 1500m.
+                HeatSinkDissipation = 2 / 60f, //Heat/sec Heat Sink dissipation rate. Does not affect FSD dissipation. SG is 1/5 of this. This value is 10x ingame. Default is 2.
+                HeatSinkCapacityBonus = 80f, //Flat heat capacity added per active vent. SG is 1/5 of this. This value is 10x ingame. Default is 80.
                 AllowInSafeZone = false //Allows drives to spool and operate inside safe zones. Warning: enabling this can allow for economy station theft. Default is false.
             };
         }
@@ -370,7 +370,7 @@ namespace WarpDriveMod
             { "startSpeed", "Initial cruise speed in km/s. Allows up to maxSpeed. Default: 1km/s." },
             { "maxHeat", "Multiplier for FSD heat capacities. Does not affect Heat Sinks. Max: 200. Default: 1." },
             { "heatGain", "Multiplier for global heat generation. Set to 0 to disable heat entirely. Default: 1." },
-            { "heatDissipationDrive", "Heat/sec FSD dissipation rate. Does not affect Heat Sink dissipation. SG is 1/5 of this. This value is 10x ingame. Default: 1." },
+            { "heatDissipationDrive", "Heat/sec FSD dissipation rate. Does not affect Heat Sink dissipation. SG is 1/4 of this. This value is 10x ingame. Default: 3." },
             { "baseRequiredPower", "The absolute minimum power a LG drive can use to spool. Measured in MW. Default: 20." },
             { "baseRequiredPowerSmall", "The absolute minimum power a SG drive can use to spool. Measured in MW. Default: 20." },
             { "powerRequirementMultiplier", "Power multiplier for higher speeds while actively cruising. Default: 2." },
@@ -384,9 +384,9 @@ namespace WarpDriveMod
             { "PrototechJump", "Spooling time for Prototech drives. Max 90s, min 3s. Default: 5s." },
             { "AllowInGravityMax", "Maximum allowed gravity if \"AllowInGravity=true\". Default: 0.2g." },
             { "AllowInGravityMaxSpeed", "Maximum allowed speed in km/s while in gravity if \"AllowInGravity=true\". Don't set too high or performance may degrade. Default: 3km/s." },
-            { "AllowInGravityMinAltitude", "Minimum allowed altitude on planets in meters if \"AllowInGravityMax\" doesn't stop you first. Bare minimum allowed is 300m. Default: 3000m." },
-            { "HeatSinkDissipation", "Heat/sec Heat Sink dissipation rate. Does not affect FSD dissipation. SG is 1/5 of this. This value is 10x ingame. Default: 1." },
-            { "HeatSinkCapacityBonus", "Flat heat capacity added per active vent. SG is 1/5 of this. This value is 10x ingame. Default: 50." },
+            { "AllowInGravityMinAltitude", "Minimum safety floor altitude on planets in meters. Bare minimum allowed is 300m. Default: 1500m." },
+            { "HeatSinkDissipation", "Heat/sec Heat Sink dissipation rate. Does not affect FSD dissipation. SG is 1/5 of this. This value is 10x ingame. Default: 2." },
+            { "HeatSinkCapacityBonus", "Flat heat capacity added per active vent. SG is 1/5 of this. This value is 10x ingame. Default: 80." },
             { "AllowInSafeZone", "Allows drives to spool and operate inside safe zones. Warning: enabling this can allow for economy station theft. Default: false." },
         };
 
