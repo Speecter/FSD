@@ -2,7 +2,6 @@
 <Definitions xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
     <CubeBlocks>
 
-    <!--Vanilla Heat Sink currently using air vent model-->
         <Definition xsi:type="MyObjectBuilder_UpgradeModuleDefinition">
             <Id>
                 <TypeId>UpgradeModule</TypeId>
@@ -11,8 +10,8 @@
             <DisplayName>Heat Sink</DisplayName>
             <Icon>Textures\GUI\Icons\Cubes\OxygenPressurizerFullLarge.dds</Icon>
             <Description>Collects heat from an operational Frameshift Drive and radiates it into space to keep the drive operational for longer periods of time.
-Heat Capacity: 500
-Dissipation Rate: 10 Heat/sec
+Heat Capacity: 800
+Dissipation Rate: 20 Heat/sec
 Power Use: 500kw</Description>
             <CubeSize>Large</CubeSize>
             <BlockTopology>TriangleMesh</BlockTopology>
@@ -70,8 +69,8 @@ Power Use: 500kw</Description>
             <DisplayName>Heat Sink</DisplayName>
             <Icon>Textures\GUI\Icons\Cubes\OxygenPressurizerFullSmall.dds</Icon>
             <Description>Collects heat from an operational Frameshift Drive and radiates it into space to keep the drive operational for longer periods of time.
-Heat Capacity: 100
-Dissipation Rate: 2 Heat/sec
+Heat Capacity: 160
+Dissipation Rate: 4 Heat/sec
 Power Use: 125kw</Description>
             <CubeSize>Small</CubeSize>
             <BlockTopology>TriangleMesh</BlockTopology>
@@ -129,8 +128,8 @@ Power Use: 125kw</Description>
             <DisplayName>Heat Sink Vent</DisplayName>
             <Icon>Textures\GUI\Icons\Cubes\HeatVent.dds</Icon>
             <Description>Collects heat from an operational Frameshift Drive and radiates it into space to keep the drive operational for longer periods of time.
-Heat Capacity: 500
-Dissipation Rate: 10 Heat/sec
+Heat Capacity: 800
+Dissipation Rate: 20 Heat/sec
 Power Use: 500kw</Description>
             <CubeSize>Large</CubeSize>
             <BlockTopology>TriangleMesh</BlockTopology>
@@ -192,8 +191,8 @@ Power Use: 500kw</Description>
             <DisplayName>Heat Sink Vent</DisplayName>
             <Icon>Textures\GUI\Icons\Cubes\HeatVent.dds</Icon>
             <Description>Collects heat from an operational Frameshift Drive and radiates it into space to keep the drive operational for longer periods of time.
-Heat Capacity: 100
-Dissipation Rate: 2 Heat/sec
+Heat Capacity: 160
+Dissipation Rate: 4 Heat/sec
 Power Use: 125kw</Description>
             <CubeSize>Small</CubeSize>
             <BlockTopology>TriangleMesh</BlockTopology>
