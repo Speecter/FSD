@@ -229,6 +229,8 @@ namespace WarpDriveMod
 
                 if (!MyAPIGateway.Utilities.IsDedicated && !MyAPIGateway.Multiplayer.IsServer)
                     RequestConfig();
+
+                HyperspaceSunManager.Instance.Init(ModContext?.ModPath);
             }
             catch (Exception)
             {
@@ -637,6 +639,11 @@ namespace WarpDriveMod
                 }
                 tempCapitalFSDList.Clear();
             }
+
+            if (!MyAPIGateway.Utilities.IsDedicated)
+            {
+                HyperspaceSunManager.Instance.UpdateSimulation();
+            }
         }
 
         public override void Draw()
@@ -646,6 +653,8 @@ namespace WarpDriveMod
 
             foreach (WarpSystem s in warpSystems)
                 s.Draw();
+
+            HyperspaceSunManager.Instance.UpdateDraw();
         }
 
         public WarpSystem GetGridWarpSystem(MyCubeGrid grid)
@@ -754,6 +763,8 @@ namespace WarpDriveMod
 
                 Settings.instance = null;
                 HeatSink.heatEnabled = true;
+
+                HyperspaceSunManager.Instance.Unload();
 
                 instance = null;
 

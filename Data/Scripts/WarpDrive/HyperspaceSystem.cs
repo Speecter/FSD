@@ -190,7 +190,39 @@ namespace WarpDriveMod
         }
 
         // Camera shake during hyperspace transit (client-side only, via MyCockpit.AddShake)
-        private const float HYPERSPACE_SHAKE = 1.0f; // magnitude fed to AddShake() every transit tick
+        private const float HYPERSPACE_SHAKE_BASE = 1.0f;
+        private const float HYPERSPACE_SHAKE_PEAK = 1.5f;
+
+        private float CalculateCurrentShake(long elapsedTicks, long totalTicks)
+        {
+            if (totalTicks <= 0)
+                return HYPERSPACE_SHAKE_BASE;
+
+            float remainingTicks = Math.Max(0, totalTicks - elapsedTicks);
+
+            // 1. Entry phase: starts at 3.0f, smoothly subdues to 1.0f over first 3 seconds (180 ticks)
+            const float entryTicks = 180f;
+            if (elapsedTicks < entryTicks)
+            {
+                float factor = 1.0f - (elapsedTicks / entryTicks); // 1.0 -> 0.0
+                // Smooth step
+                factor = factor * factor * (3f - 2f * factor);
+                return MathHelper.Lerp(HYPERSPACE_SHAKE_BASE, HYPERSPACE_SHAKE_PEAK, factor);
+            }
+
+            // 2. Pre-exit phase: 5 seconds (300 ticks) before jump-out, smoothly raises from 1.0f to 3.0f
+            const float exitWindowTicks = 300f;
+            if (remainingTicks <= exitWindowTicks)
+            {
+                float factor = 1.0f - (remainingTicks / exitWindowTicks); // 0.0 -> 1.0
+                // Smooth step
+                factor = factor * factor * (3f - 2f * factor);
+                return MathHelper.Lerp(HYPERSPACE_SHAKE_BASE, HYPERSPACE_SHAKE_PEAK, factor);
+            }
+
+            // 3. Cruise phase: steady 1.0f
+            return HYPERSPACE_SHAKE_BASE;
+        }
 
         // Sky dome / background occluder fields (client-side only)
         private static readonly MyStringId SkyMaterial = MyStringId.GetOrCompute("Square");
@@ -249,6 +281,7 @@ namespace WarpDriveMod
 
         public void Close()
         {
+            HyperspaceSunManager.Instance.ReleaseSuppression(this, true);
             WarpDriveSession.instance?.UnregisterHyperspace(this);
             if (State != HyperState.Idle)
             {
@@ -990,6 +1023,70 @@ namespace WarpDriveMod
                             safeDest = origin + (dir * safeDist);
                             adjusted = true;
                         }
+                    }
+                }
+            }
+
+            // 4. Planetary safeguard: prevent jumping into or through planets, ensuring ship drops at least 500m from the ground
+            List<IMyVoxelBase> planetVoxels = new List<IMyVoxelBase>();
+            MyAPIGateway.Session.VoxelMaps.GetInstances(planetVoxels);
+            foreach (var voxel in planetVoxels)
+            {
+                var planet = voxel as MyPlanet;
+                if (planet == null) continue;
+
+                Vector3D planetCenter = planet.PositionComp.GetPosition();
+                Vector3D toCenter = planetCenter - origin;
+                double tca = Vector3D.Dot(toCenter, dir);
+                double d2 = toCenter.LengthSquared() - (tca * tca);
+                double maxRadius = planet.MaximumRadius;
+
+                // Check trajectory passing through or towards planet
+                if (d2 < maxRadius * maxRadius && tca > 0)
+                {
+                    double thc = Math.Sqrt(Math.Max(0.0, maxRadius * maxRadius - d2));
+                    double tEntry = tca - thc;
+
+                    if (tEntry < safeDist)
+                    {
+                        // Trajectory penetrates planet bounding sphere before or at arrival
+                        Vector3D testPoint = origin + (dir * Math.Max(0.0, Math.Min(tca, safeDist)));
+                        Vector3D surfacePoint = planet.GetClosestSurfacePointGlobal(ref testPoint);
+                        Vector3D groundNormal = Vector3D.Normalize(surfacePoint - planetCenter);
+                        Vector3D safeArrival = surfacePoint + (groundNormal * safetyBuffer);
+
+                        double newDist = Vector3D.Dot(safeArrival - origin, dir);
+                        if (newDist > 0 && newDist < safeDist)
+                        {
+                            safeDist = newDist;
+                            safeDest = origin + (dir * safeDist);
+                            adjusted = true;
+                        }
+                    }
+                }
+
+                // Verify destination altitude above terrain surface: ensure at least 500m + shipRadius
+                Vector3D surfAtDest = planet.GetClosestSurfacePointGlobal(ref safeDest);
+                double distCenterAtDest = (safeDest - planetCenter).Length();
+                double surfDistCenterAtDest = (surfAtDest - planetCenter).Length();
+                double altitude = distCenterAtDest - surfDistCenterAtDest;
+
+                if (altitude < safetyBuffer)
+                {
+                    Vector3D groundNorm = Vector3D.Normalize(surfAtDest - planetCenter);
+                    Vector3D safeArrival = surfAtDest + (groundNorm * safetyBuffer);
+                    double newDist = Vector3D.Dot(safeArrival - origin, dir);
+                    if (newDist > 0 && newDist < safeDist)
+                    {
+                        safeDist = newDist;
+                        safeDest = origin + (dir * safeDist);
+                        adjusted = true;
+                    }
+                    else
+                    {
+                        safeDest = safeArrival;
+                        safeDist = Vector3D.Distance(origin, safeDest);
+                        adjusted = true;
                     }
                 }
             }
@@ -2018,6 +2115,7 @@ namespace WarpDriveMod
         // Emergency drop out of Hyperspace transit when power or FSD drive is cut
         public void EmergencyDrop(string reason = "EMERGENCY DROP - CONDUIT COLLAPSED")
         {
+            HyperspaceSunManager.Instance.ReleaseSuppression(this, true);
             var mainGrid = GridSystem?.mainGrid;
             if (mainGrid == null) return;
 
@@ -2094,6 +2192,30 @@ namespace WarpDriveMod
                 }
             }
             emergencyPowerDisableTicks = 5 * 60; // 5 seconds (300 ticks)
+
+            // Guarantee 500m clearance above ground on emergency drop
+            if (mainGrid != null && (MyAPIGateway.Multiplayer.IsServer || MyAPIGateway.Utilities.IsDedicated))
+            {
+                Vector3D shipPos = mainGrid.PositionComp.GetPosition();
+                BoundingBoxD dropBox = new BoundingBoxD(shipPos - new Vector3D(100000), shipPos + new Vector3D(100000));
+                var dropPlanet = MyGamePruningStructure.GetClosestPlanet(ref dropBox);
+                if (dropPlanet != null)
+                {
+                    Vector3D pCenter = dropPlanet.PositionComp.GetPosition();
+                    Vector3D pSurf = dropPlanet.GetClosestSurfacePointGlobal(ref shipPos);
+                    double shipRadius = mainGrid.PositionComp.WorldAABB.HalfExtents.AbsMax();
+                    double minSafeAlt = 500.0 + shipRadius;
+                    double curAlt = (shipPos - pCenter).Length() - (pSurf - pCenter).Length();
+                    if (curAlt < minSafeAlt)
+                    {
+                        Vector3D gNorm = Vector3D.Normalize(pSurf - pCenter);
+                        Vector3D safeDropPos = pSurf + (gNorm * minSafeAlt);
+                        MatrixD safeMatrix = mainGrid.WorldMatrix;
+                        safeMatrix.Translation = safeDropPos;
+                        mainGrid.Teleport(safeMatrix);
+                    }
+                }
+            }
 
             // 3. Violently yeet the ship and apply uncontrolled spin
             if (mainGrid.Physics != null)
@@ -2349,6 +2471,22 @@ namespace WarpDriveMod
                     EmergencyDrop("GRAVITY WELL EXCLUSION ZONE - EMERGENCY DROP!");
                     return;
                 }
+
+                BoundingBoxD transitBox = new BoundingBoxD(currentPos - new Vector3D(50000), currentPos + new Vector3D(50000));
+                var transitPlanet = MyGamePruningStructure.GetClosestPlanet(ref transitBox);
+                if (transitPlanet != null)
+                {
+                    Vector3D pCenter = transitPlanet.PositionComp.GetPosition();
+                    Vector3D pSurf = transitPlanet.GetClosestSurfacePointGlobal(ref currentPos);
+                    double shipRadius = mainGrid.PositionComp.WorldAABB.HalfExtents.AbsMax();
+                    double minSafeAlt = 500.0 + shipRadius;
+                    double alt = (currentPos - pCenter).Length() - (pSurf - pCenter).Length();
+                    if (alt < minSafeAlt)
+                    {
+                        EmergencyDrop("TERRAIN PROXIMITY - EMERGENCY DROP 500m FROM GROUND!");
+                        return;
+                    }
+                }
             }
 
             // Calculate current instantaneous speed in km/s (reflects 0.5s accel and decel curves)
@@ -2389,6 +2527,8 @@ namespace WarpDriveMod
 
                 if (isLocalPlayerOnboard)
                 {
+                    HyperspaceSunManager.Instance.RequestSuppression(this, true);
+
                     // Player is riding the ship: glue audio anchor to camera position so extreme speeds never outrun the sound
                     Vector3D soundAnchor = (MyAPIGateway.Session?.Camera != null)
                         ? MyAPIGateway.Session.Camera.Position
@@ -2429,10 +2569,15 @@ namespace WarpDriveMod
                     // Hyperspace turbulence shake — SE handles damping/feel internally
                     var activeCockpit = GridSystem?.FindMainCockpit() as MyCockpit;
                     if (activeCockpit != null)
-                        activeCockpit.AddShake(HYPERSPACE_SHAKE);
+                    {
+                        float shakeMagnitude = CalculateCurrentShake(transitElapsedTicks, transitTotalTicks);
+                        activeCockpit.AddShake(shakeMagnitude);
+                    }
                 }
                 else
                 {
+                    HyperspaceSunManager.Instance.ReleaseSuppression(this, true);
+
                     // Player is not onboard (left the cockpit, stepped out, or watched from outside):
                     // Stop the internal hyperspace tunnel sound and corridor particle immediately!
                     if (transitSound != null && transitSound.IsPlaying)
@@ -2516,8 +2661,27 @@ namespace WarpDriveMod
         // Drops out of Hyperspace at JumpDestination
         public void ExitHyperspace()
         {
+            HyperspaceSunManager.Instance.ReleaseSuppression(this, false);
             var mainGrid = GridSystem?.mainGrid;
             if (mainGrid == null) return;
+
+            // Guarantee minimum 500m ground clearance on arrival
+            BoundingBoxD destBox = new BoundingBoxD(JumpDestination - new Vector3D(100000), JumpDestination + new Vector3D(100000));
+            var arrPlanet = MyGamePruningStructure.GetClosestPlanet(ref destBox);
+            if (arrPlanet != null)
+            {
+                Vector3D pCenter = arrPlanet.PositionComp.GetPosition();
+                Vector3D testDest = JumpDestination;
+                Vector3D pSurf = arrPlanet.GetClosestSurfacePointGlobal(ref testDest);
+                double shipRadius = mainGrid.PositionComp.WorldAABB.HalfExtents.AbsMax();
+                double minSafeAlt = 500.0 + shipRadius;
+                double curAlt = (JumpDestination - pCenter).Length() - (pSurf - pCenter).Length();
+                if (curAlt < minSafeAlt)
+                {
+                    Vector3D gNorm = Vector3D.Normalize(pSurf - pCenter);
+                    JumpDestination = pSurf + (gNorm * minSafeAlt);
+                }
+            }
 
             // 1. Snap precisely to destination with locked orientation
             MatrixD finalMatrix = JumpOrientation;

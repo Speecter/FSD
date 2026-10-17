@@ -228,6 +228,14 @@ namespace WarpDriveMod
                         if (!loopSound.IsPlaying)
                             loopSound.PlaySound(WarpSound.cruiseOperatingSound, true);
                     }
+
+                    float shake = GetSupercruiseGravityShakeMagnitude();
+                    if (shake > 0.001f)
+                    {
+                        var activeCockpit = grid?.FindMainCockpit() as MyCockpit;
+                        if (activeCockpit != null)
+                            activeCockpit.AddShake(shake);
+                    }
                 }
 
                 if (InWarp() && currentSpeedPt > 1f)
@@ -1099,6 +1107,12 @@ namespace WarpDriveMod
             if (closestPlanet == null)
                 return false;
 
+            // Hard deck: MaxGravityPercentage of planet surface gravity
+            float surfaceG = GetPlanetSurfaceGravity(closestPlanet);
+            float maxGravPct = MathHelper.Clamp(Settings.instance?.MaxGravityPercentage ?? 0.9f, 0.0f, 0.9f);
+            if (surfaceG > 0.01f && (gravity / surfaceG) >= maxGravPct)
+                return true;
+
             Vector3D centerOfMassWorld = grid.mainGrid.Physics.CenterOfMassWorld;
             Vector3D planetCenter = closestPlanet.PositionComp.GetPosition();
             Vector3D closestSurface = closestPlanet.GetClosestSurfacePointGlobal(ref centerOfMassWorld);
@@ -1171,6 +1185,27 @@ namespace WarpDriveMod
             return Math.Pow(ratio, 0.285);
         }
 
+        public float GetSupercruiseGravityShakeMagnitude()
+        {
+            if (grid?.mainGrid?.Physics == null) return 0f;
+            float currentG = GridGravityNow();
+            if (currentG <= 0.001f) return 0f;
+
+            BoundingBoxD worldAABB = grid.mainGrid.PositionComp.WorldAABB;
+            MyPlanet closestPlanet = MyGamePruningStructure.GetClosestPlanet(ref worldAABB);
+            if (closestPlanet == null) return 0f;
+
+            float surfaceG = GetPlanetSurfaceGravity(closestPlanet);
+            if (surfaceG <= 0.01f) return 0f;
+
+            float maxGravPct = MathHelper.Clamp(Settings.instance?.MaxGravityPercentage ?? 0.9f, 0.01f, 0.9f);
+            float gravityRatio = currentG / surfaceG;
+
+            // Camera shake scales smoothly from 0.0f at edge of gravity well to 1.0f at the hard deck limit
+            float shake = MathHelper.Clamp(gravityRatio / maxGravPct, 0f, 1f);
+            return shake;
+        }
+
         public double GetCurrentLowDeckMps()
         {
             return GetCurrentLowDeckMps(GetGravityInfluenceFactor());
@@ -1178,7 +1213,9 @@ namespace WarpDriveMod
 
         public double GetCurrentLowDeckMps(double t)
         {
-            return MathHelper.Lerp(SPACE_LOW_DECK_MPS, GRAVITY_LOW_DECK_MPS, t);
+            float speedPct = MathHelper.Clamp(Settings.instance?.AllowInGravitySpeedPercentage ?? 1.0f, 0.1f, 1.0f);
+            double targetLowDeck = GRAVITY_LOW_DECK_MPS * speedPct;
+            return MathHelper.Lerp(SPACE_LOW_DECK_MPS, targetLowDeck, t);
         }
 
         public double GetCurrentHighDeckMps()
@@ -1188,8 +1225,10 @@ namespace WarpDriveMod
 
         public double GetCurrentHighDeckMps(double t)
         {
-            double spaceMaxMps = Math.Max(GRAVITY_HIGH_DECK_MPS, (Settings.instance?.maxSpeed ?? (50000.0 / 60.0)) * 60.0);
-            return MathHelper.Lerp(spaceMaxMps, GRAVITY_HIGH_DECK_MPS, t);
+            float speedPct = MathHelper.Clamp(Settings.instance?.AllowInGravitySpeedPercentage ?? 1.0f, 0.1f, 1.0f);
+            double targetHighDeck = GRAVITY_HIGH_DECK_MPS * speedPct;
+            double spaceMaxMps = Math.Max(targetHighDeck, (Settings.instance?.maxSpeed ?? (50000.0 / 60.0)) * 60.0);
+            return MathHelper.Lerp(spaceMaxMps, targetHighDeck, t);
         }
 
 
@@ -1285,7 +1324,7 @@ namespace WarpDriveMod
                 float displayPower = primaryFunctional ? primaryDrive.requiredPower : 0f;
 
                 heatGenerationRate = warpState == State.active && settings.heatGain > 0f
-                    ? displayPower / (isPrototech ? heatPerMWDivisorPrototech : heatPerMWDivisor) * (1f + MathHelper.Clamp(GridGravityNow() / Math.Max(settings.AllowInGravityMax, 0.0001f), 0f, 1f)) * settings.heatGain / 60f
+                    ? displayPower / (isPrototech ? heatPerMWDivisorPrototech : heatPerMWDivisor) * (1f + (float)GetGravityInfluenceFactor()) * settings.heatGain / 60f
                     : 0f;
 
                 totalHeat = 0f;

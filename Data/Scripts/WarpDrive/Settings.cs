@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using ProtoBuf;
 using Sandbox.ModAPI;
+using VRageMath;
 
 namespace WarpDriveMod
 {
@@ -62,10 +63,13 @@ namespace WarpDriveMod
         public float AllowInGravityMax;
 
         [ProtoMember(18)]
-        public double AllowInGravityMaxSpeed;
+        public float AllowInGravitySpeedPercentage;
 
         [ProtoMember(19)]
         public double AllowInGravityMinAltitude;
+
+        [ProtoMember(20)]
+        public float MaxGravityPercentage;
 
         [ProtoMember(21)]
         public double PrototechJump;
@@ -93,15 +97,16 @@ namespace WarpDriveMod
                 powerRequirementMultiplier = 2, //Power multiplier for higher speeds while actively cruising. Default is 2.
                 powerRequirementBySpeedDeviderLarge = 3f, //General power divider for LG FSDs while actively cruising. Default is 3.
                 powerRequirementBySpeedDeviderSmall = 3f, //General power divider for SG FSDs while actively cruising. Default is 3.
-                AllowInGravity = true, //Allows cruise in gravity. Ship will drop to "AllowInGravityMaxSpeed" and stops if altitude is below "AllowInGravityMinAltitude" or gravity reaches "AllowInGravityMax". Default is true.
+                AllowInGravity = true, //Allows cruise in gravity. Dynamic speed scaling down to low deck, stopping if altitude is below safety floor or gravity reaches MaxGravityPercentage. Default is true.
                 AllowToDetectEnemyGrids = false, //If true, spooling time is delayed to "DelayJumpIfEnemyIsNear" when an enemy is within "DetectEnemyGridInRange". Default is false.
                 DetectEnemyGridInRange = 2000, //Detection range in meters for enemy grids if "AllowToDetectEnemyGrids=true". Default is 2000m.
                 DelayJumpIfEnemyIsNear = 30, //Spooling time for all drives when an enemy is within "DetectEnemyGridInRange". Max 90s, min is "DelayJump". Default is 30s.
                 DelayJump = 10, //Spooling time for standard drives. Max 90s, min 3s. Default is 10s.
                 PrototechJump = 5, //Spooling time for Prototech drives. Max 90s, min 3s. Default is 5s.
-                AllowInGravityMax = 0.2f, //Maximum allowed gravity if "AllowInGravity=true". Default is 0.2g.
-                AllowInGravityMaxSpeed = 3000 / 60d, //Maximum allowed speed in km/s while in gravity if "AllowInGravity=true". Don't set too high or performance may degrade. Default is 3km/s.
+                AllowInGravityMax = 0.2f, //Maximum allowed natural gravity (in g) to initiate a Hyperspace jump or exit near planets. Default is 0.2g.
+                AllowInGravitySpeedPercentage = 1.0f, //Speed percentage multiplier for low deck and high deck supercruise gliding in gravity (0.1 to 1.0). Default is 1.0.
                 AllowInGravityMinAltitude = 1500d, //Minimum safety floor altitude on planets in meters. Default is 1500m.
+                MaxGravityPercentage = 0.9f, //Percentage of planet surface gravity reached before dropping out of supercruise (0.0 to 0.9, meaning up to 90% gravity). Default is 0.9.
                 HeatSinkDissipation = 2 / 60f, //Heat/sec Heat Sink dissipation rate. Does not affect FSD dissipation. SG is 1/5 of this. This value is 10x ingame. Default is 2.
                 HeatSinkCapacityBonus = 80f, //Flat heat capacity added per active vent. SG is 1/5 of this. This value is 10x ingame. Default is 80.
                 AllowInSafeZone = false //Allows drives to spool and operate inside safe zones. Warning: enabling this can allow for economy station theft. Default is false.
@@ -138,8 +143,9 @@ namespace WarpDriveMod
             DelayJump = m.DelayJump;
             PrototechJump = m.PrototechJump;
             AllowInGravityMax = m.AllowInGravityMax;
-            AllowInGravityMaxSpeed = m.AllowInGravityMaxSpeed;
+            AllowInGravitySpeedPercentage = m.AllowInGravitySpeedPercentage;
             AllowInGravityMinAltitude = m.AllowInGravityMinAltitude;
+            MaxGravityPercentage = m.MaxGravityPercentage;
             HeatSinkDissipation = m.HeatSinkDissipation;
             HeatSinkCapacityBonus = m.HeatSinkCapacityBonus;
             AllowInSafeZone = m.AllowInSafeZone;
@@ -182,7 +188,6 @@ namespace WarpDriveMod
 
             settings.maxSpeed = settings.maxSpeed * 1000 / 60d;
             settings.startSpeed = settings.startSpeed * 1000 / 60d;
-            settings.AllowInGravityMaxSpeed = settings.AllowInGravityMaxSpeed * 1000 / 60d;
             settings.heatDissipationDrive /= 60f;
             settings.HeatSinkDissipation /= 60f;
 
@@ -194,7 +199,6 @@ namespace WarpDriveMod
             Settings settings = GetDefaults();
             settings.maxSpeed = settings.maxSpeed * 60d / 1000;
             settings.startSpeed = settings.startSpeed * 60d / 1000;
-            settings.AllowInGravityMaxSpeed = settings.AllowInGravityMaxSpeed * 60d / 1000;
             settings.heatDissipationDrive *= 60f;
             settings.HeatSinkDissipation *= 60f;
             return settings;
@@ -307,26 +311,27 @@ namespace WarpDriveMod
                 changed = true;
             }
 
-            double minGravitySpeed = Math.Min(1, saved.maxSpeed);
-            if (double.IsNaN(saved.AllowInGravityMaxSpeed))
+            if (float.IsNaN(saved.AllowInGravitySpeedPercentage) || saved.AllowInGravitySpeedPercentage < 0.1f || saved.AllowInGravitySpeedPercentage > 1.0f)
             {
-                saved.AllowInGravityMaxSpeed = Math.Min(defaults.AllowInGravityMaxSpeed, saved.maxSpeed);
-                changed = true;
-            }
-            else if (saved.AllowInGravityMaxSpeed < minGravitySpeed)
-            {
-                saved.AllowInGravityMaxSpeed = minGravitySpeed;
-                changed = true;
-            }
-            else if (saved.AllowInGravityMaxSpeed > saved.maxSpeed)
-            {
-                saved.AllowInGravityMaxSpeed = saved.maxSpeed;
+                if (float.IsNaN(saved.AllowInGravitySpeedPercentage) || saved.AllowInGravitySpeedPercentage <= 0f)
+                    saved.AllowInGravitySpeedPercentage = defaults.AllowInGravitySpeedPercentage;
+                else
+                    saved.AllowInGravitySpeedPercentage = MathHelper.Clamp(saved.AllowInGravitySpeedPercentage, 0.1f, 1.0f);
                 changed = true;
             }
 
             if (!(saved.AllowInGravityMinAltitude >= 300))
             {
                 saved.AllowInGravityMinAltitude = 300;
+                changed = true;
+            }
+
+            if (float.IsNaN(saved.MaxGravityPercentage) || saved.MaxGravityPercentage < 0.0f || saved.MaxGravityPercentage > 0.9f)
+            {
+                if (float.IsNaN(saved.MaxGravityPercentage))
+                    saved.MaxGravityPercentage = defaults.MaxGravityPercentage;
+                else
+                    saved.MaxGravityPercentage = MathHelper.Clamp(saved.MaxGravityPercentage, 0.0f, 0.9f);
                 changed = true;
             }
 
@@ -354,8 +359,9 @@ namespace WarpDriveMod
             if (missing("DelayJumpIfEnemyIsNear")) { saved.DelayJumpIfEnemyIsNear = defaults.DelayJumpIfEnemyIsNear; healed = true; }
             if (missing("DelayJump")) { saved.DelayJump = defaults.DelayJump; healed = true; }
             if (missing("AllowInGravityMax")) { saved.AllowInGravityMax = defaults.AllowInGravityMax; healed = true; }
-            if (missing("AllowInGravityMaxSpeed")) { saved.AllowInGravityMaxSpeed = defaults.AllowInGravityMaxSpeed; healed = true; }
+            if (missing("AllowInGravitySpeedPercentage")) { saved.AllowInGravitySpeedPercentage = defaults.AllowInGravitySpeedPercentage; healed = true; }
             if (missing("AllowInGravityMinAltitude")) { saved.AllowInGravityMinAltitude = defaults.AllowInGravityMinAltitude; healed = true; }
+            if (missing("MaxGravityPercentage")) { saved.MaxGravityPercentage = defaults.MaxGravityPercentage; healed = true; }
             if (missing("PrototechJump")) { saved.PrototechJump = defaults.PrototechJump; healed = true; }
             if (missing("HeatSinkDissipation")) { saved.HeatSinkDissipation = defaults.HeatSinkDissipation; healed = true; }
             if (missing("HeatSinkCapacityBonus")) { saved.HeatSinkCapacityBonus = defaults.HeatSinkCapacityBonus; healed = true; }
@@ -376,15 +382,16 @@ namespace WarpDriveMod
             { "powerRequirementMultiplier", "Power multiplier for higher speeds while actively cruising. Default: 2." },
             { "powerRequirementBySpeedDeviderLarge", "General power divider for LG FSDs while actively cruising. Default: 3." },
             { "powerRequirementBySpeedDeviderSmall", "General power divider for SG FSDs while actively cruising. Default: 3." },
-            { "AllowInGravity", "Allows cruise in gravity. Ship will drop to \"AllowInGravityMaxSpeed\" and stops if altitude is below \"AllowInGravityMinAltitude\" or gravity reaches \"AllowInGravityMax\". Default: true." },
+            { "AllowInGravity", "Allows cruise in gravity. Dynamic speed scaling down to low deck, stopping if altitude is below \"AllowInGravityMinAltitude\" or gravity reaches \"MaxGravityPercentage\". Default: true." },
             { "AllowToDetectEnemyGrids", "If true, spooling time is delayed to \"DelayJumpIfEnemyIsNear\" when an enemy is within \"DetectEnemyGridInRange\". Default: false." },
             { "DetectEnemyGridInRange", "Detection range in meters for enemy grids if \"AllowToDetectEnemyGrids=true\". Default: 2000m." },
             { "DelayJumpIfEnemyIsNear", "Spooling time for all drives when an enemy is within \"DetectEnemyGridInRange\". Max 90s, min is \"DelayJump\". Default: 30s." },
             { "DelayJump", "Spooling time for standard drives. Max 90s, min 3s. Default: 10s." },
             { "PrototechJump", "Spooling time for Prototech drives. Max 90s, min 3s. Default: 5s." },
-            { "AllowInGravityMax", "Maximum allowed gravity if \"AllowInGravity=true\". Default: 0.2g." },
-            { "AllowInGravityMaxSpeed", "Maximum allowed speed in km/s while in gravity if \"AllowInGravity=true\". Don't set too high or performance may degrade. Default: 3km/s." },
+            { "AllowInGravityMax", "Maximum allowed natural gravity (in g) to initiate a Hyperspace jump or exit near planets. Default: 0.2g." },
+            { "AllowInGravitySpeedPercentage", "Speed percentage multiplier for low deck and high deck supercruise gliding in gravity (0.1 to 1.0). Default: 1.0." },
             { "AllowInGravityMinAltitude", "Minimum safety floor altitude on planets in meters. Bare minimum allowed is 300m. Default: 1500m." },
+            { "MaxGravityPercentage", "Percentage of planet surface gravity reached before dropping out of supercruise (0.0 to 0.9, meaning up to 90% gravity). Default: 0.9." },
             { "HeatSinkDissipation", "Heat/sec Heat Sink dissipation rate. Does not affect FSD dissipation. SG is 1/5 of this. This value is 10x ingame. Default: 2." },
             { "HeatSinkCapacityBonus", "Flat heat capacity added per active vent. SG is 1/5 of this. This value is 10x ingame. Default: 80." },
             { "AllowInSafeZone", "Allows drives to spool and operate inside safe zones. Warning: enabling this can allow for economy station theft. Default: false." },

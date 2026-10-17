@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -198,6 +198,7 @@ namespace WarpDriveMod
 
         public void Close()
         {
+            HyperspaceSunManager.Instance.ReleaseSuppression(this, true);
             WarpDriveSession.instance?.UnregisterCapitalFSD(this);
 
             if (State != CapState.Idle)
@@ -940,6 +941,22 @@ namespace WarpDriveMod
                     AbortJump("GRAVITY WELL EXCLUSION ZONE - TRANSIT ABORTED!");
                     return;
                 }
+
+                BoundingBoxD transitBox = new BoundingBoxD(currentPos - new Vector3D(50000), currentPos + new Vector3D(50000));
+                var transitPlanet = MyGamePruningStructure.GetClosestPlanet(ref transitBox);
+                if (transitPlanet != null)
+                {
+                    Vector3D pCenter = transitPlanet.PositionComp.GetPosition();
+                    Vector3D pSurf = transitPlanet.GetClosestSurfacePointGlobal(ref currentPos);
+                    double shipRadius = mainGrid.PositionComp.WorldAABB.HalfExtents.AbsMax();
+                    double minSafeAlt = 500.0 + shipRadius;
+                    double alt = (currentPos - pCenter).Length() - (pSurf - pCenter).Length();
+                    if (alt < minSafeAlt)
+                    {
+                        AbortJump("TERRAIN PROXIMITY - TRANSIT ABORTED 500m FROM GROUND!");
+                        return;
+                    }
+                }
             }
 
             // Keep physics velocities zeroed during transit
@@ -952,6 +969,7 @@ namespace WarpDriveMod
 
                 if (isLocalOnboard)
                 {
+                    HyperspaceSunManager.Instance.RequestSuppression(this, true);
                     UpdateTransitTunnelFX();
                     DrawHyperspaceBackdrop();
 
@@ -978,6 +996,8 @@ namespace WarpDriveMod
                 }
                 else
                 {
+                    HyperspaceSunManager.Instance.ReleaseSuppression(this, true);
+
                     // Local player stepped off the ship during transit — stop tunnel FX immediately
                     StopTransitParticles();
                     if (transitSound != null && transitSound.IsPlaying)
@@ -1031,6 +1051,7 @@ namespace WarpDriveMod
 
         private void StartJumpOut()
         {
+            HyperspaceSunManager.Instance.ReleaseSuppression(this, false);
             State = CapState.JumpOut;
             stateElapsedTicks = 0;
             stateTotalTicks = (long)(JUMP_OUT_SECONDS * 60f);
@@ -1043,6 +1064,23 @@ namespace WarpDriveMod
 
             double noseOffset, shipLength, crossRadius;
             ComputeShipExtents(forward, out noseOffset, out shipLength, out crossRadius);
+
+            // Guarantee minimum 500m ground clearance on arrival
+            BoundingBoxD destBox = new BoundingBoxD(JumpDestination - new Vector3D(100000), JumpDestination + new Vector3D(100000));
+            var arrPlanet = MyGamePruningStructure.GetClosestPlanet(ref destBox);
+            if (arrPlanet != null)
+            {
+                Vector3D pCenter = arrPlanet.PositionComp.GetPosition();
+                Vector3D testDest = JumpDestination;
+                Vector3D pSurf = arrPlanet.GetClosestSurfacePointGlobal(ref testDest);
+                double minSafeAlt = 500.0 + crossRadius;
+                double curAlt = (JumpDestination - pCenter).Length() - (pSurf - pCenter).Length();
+                if (curAlt < minSafeAlt)
+                {
+                    Vector3D gNorm = Vector3D.Normalize(pSurf - pCenter);
+                    JumpDestination = pSurf + (gNorm * minSafeAlt);
+                }
+            }
 
             Vector3D exitWormholePos = JumpDestination;
             double totalTravelDist = shipLength + 5.0;
@@ -1173,6 +1211,7 @@ namespace WarpDriveMod
                 HyperspaceSystem.UnregisterClaim(mainGrid.EntityId);
             }
 
+            HyperspaceSunManager.Instance.ReleaseSuppression(this, true);
             State = CapState.Idle;
             SetPlayersSave(true);
             _playersInTransit.Clear();
@@ -1181,6 +1220,30 @@ namespace WarpDriveMod
             RestoreAllBlocksVisibility();
             SetGridInvincibility(false);
             ClearPhysicsVelocities();
+
+            // Guarantee 500m clearance above ground on abort/drop
+            if (mainGrid != null && (MyAPIGateway.Multiplayer.IsServer || MyAPIGateway.Utilities.IsDedicated))
+            {
+                Vector3D shipPos = mainGrid.PositionComp.GetPosition();
+                BoundingBoxD dropBox = new BoundingBoxD(shipPos - new Vector3D(100000), shipPos + new Vector3D(100000));
+                var dropPlanet = MyGamePruningStructure.GetClosestPlanet(ref dropBox);
+                if (dropPlanet != null)
+                {
+                    Vector3D pCenter = dropPlanet.PositionComp.GetPosition();
+                    Vector3D pSurf = dropPlanet.GetClosestSurfacePointGlobal(ref shipPos);
+                    double shipRadius = mainGrid.PositionComp.WorldAABB.HalfExtents.AbsMax();
+                    double minSafeAlt = 500.0 + shipRadius;
+                    double curAlt = (shipPos - pCenter).Length() - (pSurf - pCenter).Length();
+                    if (curAlt < minSafeAlt)
+                    {
+                        Vector3D gNorm = Vector3D.Normalize(pSurf - pCenter);
+                        Vector3D safeDropPos = pSurf + (gNorm * minSafeAlt);
+                        MatrixD safeMatrix = mainGrid.WorldMatrix;
+                        safeMatrix.Translation = safeDropPos;
+                        SafeTeleportMainGrid(safeMatrix);
+                    }
+                }
+            }
 
             SendNotification(reason, 5f, "Red");
         }
@@ -1810,6 +1873,70 @@ namespace WarpDriveMod
                             safeDest = origin + (dir * safeDist);
                             adjusted = true;
                         }
+                    }
+                }
+            }
+
+            // Planetary safeguard: prevent jumping into or through planets, ensuring ship drops at least 500m from the ground
+            List<IMyVoxelBase> planetVoxels = new List<IMyVoxelBase>();
+            MyAPIGateway.Session.VoxelMaps.GetInstances(planetVoxels);
+            foreach (var voxel in planetVoxels)
+            {
+                var planet = voxel as MyPlanet;
+                if (planet == null) continue;
+
+                Vector3D planetCenter = planet.PositionComp.GetPosition();
+                Vector3D toCenter = planetCenter - origin;
+                double tca = Vector3D.Dot(toCenter, dir);
+                double d2 = toCenter.LengthSquared() - (tca * tca);
+                double maxRadius = planet.MaximumRadius;
+
+                // Check trajectory passing through or towards planet
+                if (d2 < maxRadius * maxRadius && tca > 0)
+                {
+                    double thc = Math.Sqrt(Math.Max(0.0, maxRadius * maxRadius - d2));
+                    double tEntry = tca - thc;
+
+                    if (tEntry < safeDist)
+                    {
+                        // Trajectory penetrates planet bounding sphere before or at arrival
+                        Vector3D testPoint = origin + (dir * Math.Max(0.0, Math.Min(tca, safeDist)));
+                        Vector3D surfacePoint = planet.GetClosestSurfacePointGlobal(ref testPoint);
+                        Vector3D groundNormal = Vector3D.Normalize(surfacePoint - planetCenter);
+                        Vector3D safeArrival = surfacePoint + (groundNormal * safetyBuffer);
+
+                        double newDist = Vector3D.Dot(safeArrival - origin, dir);
+                        if (newDist > 0 && newDist < safeDist)
+                        {
+                            safeDist = newDist;
+                            safeDest = origin + (dir * safeDist);
+                            adjusted = true;
+                        }
+                    }
+                }
+
+                // Verify destination altitude above terrain surface: ensure at least 500m + shipRadius
+                Vector3D surfAtDest = planet.GetClosestSurfacePointGlobal(ref safeDest);
+                double distCenterAtDest = (safeDest - planetCenter).Length();
+                double surfDistCenterAtDest = (surfAtDest - planetCenter).Length();
+                double altitude = distCenterAtDest - surfDistCenterAtDest;
+
+                if (altitude < safetyBuffer)
+                {
+                    Vector3D groundNorm = Vector3D.Normalize(surfAtDest - planetCenter);
+                    Vector3D safeArrival = surfAtDest + (groundNorm * safetyBuffer);
+                    double newDist = Vector3D.Dot(safeArrival - origin, dir);
+                    if (newDist > 0 && newDist < safeDist)
+                    {
+                        safeDist = newDist;
+                        safeDest = origin + (dir * safeDist);
+                        adjusted = true;
+                    }
+                    else
+                    {
+                        safeDest = safeArrival;
+                        safeDist = Vector3D.Distance(origin, safeDest);
+                        adjusted = true;
                     }
                 }
             }
