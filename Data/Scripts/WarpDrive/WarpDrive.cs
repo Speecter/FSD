@@ -248,7 +248,8 @@ namespace WarpDriveMod
                 pathRadius = Math.Max(shipSize.X, shipSize.Y) / 2;
             }
 
-            LineD path = new LineD(center - forward * (shipLength / 2 - pathRadius), center + forward * (shipLength / 2 + 500.0));
+            Vector3D pathStart = spooling ? (center + forward * (shipLength / 2.0)) : (center - forward * (shipLength / 2.0 - pathRadius));
+            LineD path = new LineD(pathStart, center + forward * (shipLength / 2.0 + 500.0));
 
             var sphere = new BoundingSphereD((path.From + path.To) / 2, path.Length / 2 + pathRadius);
             List<IMyEntity> entList = MyAPIGateway.Entities.GetTopMostEntitiesInSphere(ref sphere);
@@ -260,6 +261,8 @@ namespace WarpDriveMod
 
             //gets subgrids and locked landing gear to ignore
             MyAPIGateway.GridGroups.GetGroup(mainGrid, GridLinkTypeEnum.Physical, attachedList);
+            MyAPIGateway.GridGroups.GetGroup(mainGrid, GridLinkTypeEnum.Mechanical, attachedList);
+            MyAPIGateway.GridGroups.GetGroup(mainGrid, GridLinkTypeEnum.Logical, attachedList);
 
             foreach (var ent in entList)
             {
@@ -271,15 +274,34 @@ namespace WarpDriveMod
                 }
                 else if (!(ent is MySafeZone) || Settings.instance.AllowInSafeZone)
                 {
-                if (!(ent is MyCubeGrid || ent is MyVoxelMap))
-                    continue;
+                    if (!(ent is MyCubeGrid || ent is MyVoxelMap))
+                        continue;
 
-                //asteroids ignored over 20km/s
-                if (!spooling && ent is MyVoxelMap && gridSpeed >= 333.333)
-                    continue;
+                    //asteroids ignored over 20km/s
+                    if (!spooling && ent is MyVoxelMap && gridSpeed >= 333.333)
+                        continue;
 
-                if (attachedList.Contains(ent as IMyCubeGrid))
-                    continue;
+                    var candidateGrid = ent as IMyCubeGrid;
+                    if (candidateGrid != null)
+                    {
+                        if (attachedList.Contains(candidateGrid) || WarpDrive.IsGridIgnored(candidateGrid, mainGrid, 0L))
+                            continue;
+
+                        if (gridSystem != null && gridSystem.gridGroup != null)
+                        {
+                            bool isMember = false;
+                            foreach (var g in gridSystem.gridGroup)
+                            {
+                                if (g != null && g.EntityId == candidateGrid.EntityId)
+                                {
+                                    isMember = true;
+                                    break;
+                                }
+                            }
+                            if (isMember)
+                                continue;
+                        }
+                    }
                 }
 
                 MatrixD toLocal = ent.WorldMatrixNormalizedInv;
@@ -338,7 +360,7 @@ namespace WarpDriveMod
             return false;
         }
 
-        public static bool IsGridIgnored(IMyCubeGrid candidateGrid, IMyCubeGrid myGrid, long myFleetLeader)
+        public static bool IsGridIgnored(IMyCubeGrid candidateGrid, IMyCubeGrid myGrid, long myFleetLeader = 0L)
         {
             if (candidateGrid == null || candidateGrid.MarkedForClose)
                 return true;
