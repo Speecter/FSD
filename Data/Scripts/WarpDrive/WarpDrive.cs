@@ -269,16 +269,33 @@ namespace WarpDriveMod
                     if (spooling || character.IsDead)
                         continue;
                 }
-                else if (!(ent is MySafeZone) || Settings.instance.AllowInSafeZone)
+                else if (ent is MySafeZone)
                 {
-                if (!(ent is MyCubeGrid || ent is MyVoxelMap))
-                    continue;
+                    if (Settings.instance.AllowInSafeZone)
+                        continue;
 
-                //asteroids ignored over 20km/s
-                if (!spooling && ent is MyVoxelMap && gridSpeed >= 333.333)
+                    var sz = ent as MySafeZone;
+                    if (sz != null)
+                    {
+                        var szSphere = new BoundingSphereD(sz.PositionComp.GetPosition(), sz.Radius + pathRadius);
+                        RayD ray = new RayD(path.From, path.Direction);
+                        double? hit = szSphere.Intersects(ray);
+                        if (hit.HasValue && hit.Value >= 0 && hit.Value <= path.Length)
+                            return ent;
+                    }
                     continue;
+                }
+                else if (ent is MyCubeGrid || ent is MyVoxelMap)
+                {
+                    // Asteroids ignored over 20km/s
+                    if (!spooling && ent is MyVoxelMap && gridSpeed >= 333.333)
+                        continue;
 
-                if (attachedList.Contains(ent as IMyCubeGrid))
+                    if (attachedList.Contains(ent as IMyCubeGrid))
+                        continue;
+                }
+                else
+                {
                     continue;
                 }
 
