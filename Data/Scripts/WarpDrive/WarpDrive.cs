@@ -10,6 +10,7 @@ using VRage.Game;
 using VRage.Game.Components;
 using VRage.Game.Entity;
 using VRage.Game.ModAPI;
+using VRage.Game.Models;
 using VRage.ModAPI;
 using VRage.ObjectBuilders;
 using VRage.Utils;
@@ -249,8 +250,27 @@ namespace WarpDriveMod
                 BoundingBoxD obstacleBox = new BoundingBoxD(ent.LocalAABB.Min - new Vector3D(pathRadius), ent.LocalAABB.Max + new Vector3D(pathRadius));
                 double hitDistance;
 
-                if (obstacleBox.Intersects(ref localPath, out hitDistance))
+                if (!obstacleBox.Intersects(ref localPath, out hitDistance))
+                    continue;
+
+                if (!(ent is MyVoxelMap))
                     return ent;
+
+                int rings = Math.Max(1, Math.Min(8, (int)Math.Ceiling(pathRadius / 5)));
+                for (int ring = 0; ring <= rings; ring++)
+                {
+                    int count = Math.Max(1, (int)Math.Ceiling(2 * Math.PI * ring));
+                    for (int i = 0; i < count; i++)
+                    {
+                        double angle = WarpDriveSession.instance.runtime * ring * 2.39996 + i * 2 * Math.PI / count;
+                        Vector3D offset = (gridMatrix.Right * Math.Cos(angle) + gridMatrix.Up * Math.Sin(angle)) * (pathRadius * ring / rings);
+                        LineD ray = new LineD(center - forward * (shipLength / 2) + offset, path.To + offset);
+                        MyIntersectionResultLineTriangleEx? meshHit;
+
+                        if (ent.GetIntersectionWithLine(ref ray, out meshHit, IntersectionFlags.ALL_TRIANGLES))
+                            return ent;
+                    }
+                }
             }
 
             return null;
