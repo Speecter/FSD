@@ -1154,17 +1154,20 @@ namespace WarpDriveMod
             Vector3D surfacePoint = planet.GetClosestSurfacePointGlobal(ref shipPos);
             double surfaceRadius = (surfacePoint - planetCenter).Length();
 
+            float surfaceG = GetPlanetSurfaceGravity(planet);
+            double gravScale = MathHelper.Clamp(surfaceG, 0.5f, 1.5f);
+
             double calculatedDropAlt;
             if (planet.HasAtmosphere && planet.AtmosphereRadius > surfaceRadius + 500.0)
             {
-                // 1/4 of atmosphere height above local terrain
+                // 1/8 of atmosphere height above local terrain scaled by gravity well intensity (5km on Earth-like)
                 double atmoHeight = planet.AtmosphereRadius - surfaceRadius;
-                calculatedDropAlt = atmoHeight * 0.25;
+                calculatedDropAlt = atmoHeight * 0.125 * gravScale;
             }
             else
             {
-                // Airless Moons: 4% of radius, eliminating low-G doorstep exploit
-                calculatedDropAlt = planet.AverageRadius * 0.04;
+                // Airless Moons & Planets: 2.5% of radius scaled by gravity well intensity
+                calculatedDropAlt = planet.AverageRadius * 0.025 * gravScale;
             }
 
             double minSafetyFloor = Math.Max(1500.0, Settings.instance?.AllowInGravityMinAltitude ?? 1500.0);

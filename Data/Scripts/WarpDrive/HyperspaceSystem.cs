@@ -10,6 +10,7 @@ using VRage.Game;
 using VRage.Game.Components;
 using VRage.Game.Entity;
 using VRage.Game.ModAPI;
+using VRage.Game.Models;
 using VRage.ModAPI;
 using VRage.Utils;
 using VRageMath;
@@ -810,23 +811,52 @@ namespace WarpDriveMod
                     var voxel = ent as MyVoxelBase;
                     if (voxel == null) continue;
 
-                    // Ignore planets and planet terrain physics chunks (handled by planetary safety math)
-                    if (voxel is MyPlanet || (voxel as MyVoxelBase)?.RootVoxel is MyPlanet)
+                    var planet = voxel as MyPlanet ?? (voxel as MyVoxelBase)?.RootVoxel as MyPlanet;
+                    if (planet != null)
+                    {
+                        // Planet terrain collision check using GetIntersectionWithAABB on forward corridor
+                        BoundingBoxD planetCorridorBox = new BoundingBoxD(
+                            Vector3D.Min(startPos, endPos) - new Vector3D(corridorRadius),
+                            Vector3D.Max(startPos, endPos) + new Vector3D(corridorRadius)
+                        );
+
+                        if (planet.PositionComp.WorldAABB.Intersects(planetCorridorBox))
+                        {
+                            if (planet.GetIntersectionWithAABB(ref planetCorridorBox))
+                            {
+                                MyAPIGateway.Utilities.ShowNotification("Can't Start FSD - Planet in flight path!", 4000, "Red");
+                                return true;
+                            }
+                        }
+                        continue;
+                    }
+
+                    // Asteroids: Fast broadphase bounding box check
+                    MatrixD toLocal = ent.WorldMatrixNormalizedInv;
+                    LineD localPath = new LineD(Vector3D.Transform(startPos, toLocal), Vector3D.Transform(endPos, toLocal));
+                    BoundingBoxD obstacleBox = new BoundingBoxD(ent.LocalAABB.Min - new Vector3D(corridorRadius), ent.LocalAABB.Max + new Vector3D(corridorRadius));
+                    double hitDistance;
+
+                    if (!obstacleBox.Intersects(ref localPath, out hitDistance))
                         continue;
 
-                    // Asteroids: Test if solid voxel rock geometry exists inside the forward corridor (up to 2.5km)
-                    double asteroidScanDist = Math.Max(corridorLength, 2500.0);
-                    BoundingBoxD asteroidCorridorBox = new BoundingBoxD(
-                        Vector3D.Min(startPos, startPos + forward * asteroidScanDist) - new Vector3D(corridorRadius),
-                        Vector3D.Max(startPos, startPos + forward * asteroidScanDist) + new Vector3D(corridorRadius)
-                    );
-
-                    if (voxel.PositionComp.WorldAABB.Intersects(asteroidCorridorBox))
+                    // Multi-ring concentric mesh raycast
+                    int rings = Math.Max(1, Math.Min(8, (int)Math.Ceiling(corridorRadius / 5.0)));
+                    for (int ring = 0; ring <= rings; ring++)
                     {
-                        if (voxel.GetIntersectionWithAABB(ref asteroidCorridorBox))
+                        int count = Math.Max(1, (int)Math.Ceiling(2 * Math.PI * ring));
+                        for (int i = 0; i < count; i++)
                         {
-                            MyAPIGateway.Utilities.ShowNotification("Can't Start FSD - Asteroid in flight path!", 4000, "Red");
-                            return true;
+                            double angle = WarpDriveSession.instance.runtime * ring * 2.39996 + i * 2 * Math.PI / count;
+                            Vector3D offset = (gridMatrix.Right * Math.Cos(angle) + gridMatrix.Up * Math.Sin(angle)) * (corridorRadius * ring / rings);
+                            LineD ray = new LineD(startPos + offset, endPos + offset);
+                            MyIntersectionResultLineTriangleEx? meshHit;
+
+                            if (ent.GetIntersectionWithLine(ref ray, out meshHit, IntersectionFlags.ALL_TRIANGLES))
+                            {
+                                MyAPIGateway.Utilities.ShowNotification("Can't Start FSD - Asteroid in flight path!", 4000, "Red");
+                                return true;
+                            }
                         }
                     }
                 }

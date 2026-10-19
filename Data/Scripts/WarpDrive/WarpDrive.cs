@@ -10,6 +10,7 @@ using VRage.Game;
 using VRage.Game.Components;
 using VRage.Game.Entity;
 using VRage.Game.ModAPI;
+using VRage.Game.Models;
 using VRage.ModAPI;
 using VRage.ObjectBuilders;
 using VRage.Utils;
@@ -274,7 +275,7 @@ namespace WarpDriveMod
                 }
                 else if (!(ent is MySafeZone) || Settings.instance.AllowInSafeZone)
                 {
-                    if (!(ent is MyCubeGrid || ent is MyVoxelMap))
+                    if (!(ent is MyCubeGrid || ent is MyVoxelBase))
                         continue;
 
                     //asteroids ignored over 20km/s
@@ -304,13 +305,48 @@ namespace WarpDriveMod
                     }
                 }
 
+                var planet = ent as MyPlanet ?? (ent as MyVoxelBase)?.RootVoxel as MyPlanet;
+                if (planet != null)
+                {
+                    BoundingBoxD planetBox = new BoundingBoxD(
+                        Vector3D.Min(path.From, path.To) - new Vector3D(pathRadius),
+                        Vector3D.Max(path.From, path.To) + new Vector3D(pathRadius)
+                    );
+
+                    if (planet.PositionComp.WorldAABB.Intersects(planetBox) && planet.GetIntersectionWithAABB(ref planetBox))
+                        return ent;
+
+                    continue;
+                }
+
                 MatrixD toLocal = ent.WorldMatrixNormalizedInv;
                 LineD localPath = new LineD(Vector3D.Transform(path.From, toLocal), Vector3D.Transform(path.To, toLocal));
                 BoundingBoxD obstacleBox = new BoundingBoxD(ent.LocalAABB.Min - new Vector3D(pathRadius), ent.LocalAABB.Max + new Vector3D(pathRadius));
                 double hitDistance;
 
-                if (obstacleBox.Intersects(ref localPath, out hitDistance))
+                if (!obstacleBox.Intersects(ref localPath, out hitDistance))
+                    continue;
+
+                if (!(ent is MyVoxelMap))
                     return ent;
+
+                Vector3D rayOrigin = spooling ? (center + forward * (shipLength / 2.0)) : (center - forward * (shipLength / 2.0));
+
+                int rings = Math.Max(1, Math.Min(8, (int)Math.Ceiling(pathRadius / 5)));
+                for (int ring = 0; ring <= rings; ring++)
+                {
+                    int count = Math.Max(1, (int)Math.Ceiling(2 * Math.PI * ring));
+                    for (int i = 0; i < count; i++)
+                    {
+                        double angle = WarpDriveSession.instance.runtime * ring * 2.39996 + i * 2 * Math.PI / count;
+                        Vector3D offset = (gridMatrix.Right * Math.Cos(angle) + gridMatrix.Up * Math.Sin(angle)) * (pathRadius * ring / rings);
+                        LineD ray = new LineD(rayOrigin + offset, path.To + offset);
+                        MyIntersectionResultLineTriangleEx? meshHit;
+
+                        if (ent.GetIntersectionWithLine(ref ray, out meshHit, IntersectionFlags.ALL_TRIANGLES))
+                            return ent;
+                    }
+                }
             }
 
             return null;

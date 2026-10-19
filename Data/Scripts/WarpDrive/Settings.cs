@@ -104,7 +104,7 @@ namespace WarpDriveMod
                 DelayJump = 10, //Spooling time for standard drives. Max 90s, min 3s. Default is 10s.
                 PrototechJump = 5, //Spooling time for Prototech drives. Max 90s, min 3s. Default is 5s.
                 AllowInGravityMax = 0.2f, //Maximum allowed natural gravity (in g) to initiate a Hyperspace jump or exit near planets. Default is 0.2g.
-                AllowInGravitySpeedPercentage = 1.0f, //Speed percentage multiplier for low deck and high deck supercruise gliding in gravity (0.1 to 1.0). Default is 1.0.
+                AllowInGravitySpeedPercentage = 1.0f, //Speed percentage multiplier for low deck (500m/s) and high deck (2.5km/s) supercruise gliding in gravity (0.1 to 1.0). Default is 1.0.
                 AllowInGravityMinAltitude = 1500d, //Minimum safety floor altitude on planets in meters. Default is 1500m.
                 MaxGravityPercentage = 0.9f, //Percentage of planet surface gravity reached before dropping out of supercruise (0.0 to 0.9, meaning up to 90% gravity). Default is 0.9.
                 HeatSinkDissipation = 2 / 60f, //Heat/sec Heat Sink dissipation rate. Does not affect FSD dissipation. SG is 1/5 of this. This value is 10x ingame. Default is 2.
