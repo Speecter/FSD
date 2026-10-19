@@ -250,41 +250,99 @@ namespace WarpDriveMod
             return activeCount;
         }
 
+        public bool IsAlignedWithThrusterForward(IMyShipController controller)
+        {
+            if (controller == null) return false;
+            if (gridGroup == null || gridGroup.Count == 0) return true;
+
+            Vector3D cockpitFwd = controller.WorldMatrix.Forward;
+            int fwdThrustCount = 0;
+            int totalThrustCount = 0;
+
+            foreach (var igrid in gridGroup)
+            {
+                var cg = igrid as MyCubeGrid;
+                if (cg == null) continue;
+
+                foreach (var block in cg.GetFatBlocks())
+                {
+                    var thrust = block as IMyThrust;
+                    if (thrust == null || !thrust.IsFunctional) continue;
+
+                    totalThrustCount++;
+                    // In SE, a thruster produces propulsion along its WorldMatrix.Forward axis
+                    if (Vector3D.Dot(thrust.WorldMatrix.Forward, cockpitFwd) > 0.6)
+                    {
+                        fwdThrustCount++;
+                    }
+                }
+            }
+
+            return totalThrustCount == 0 || fwdThrustCount > 0;
+        }
+
         public IMyShipController FindMainCockpit()
         {
             if (gridGroup == null || gridGroup.Count == 0)
                 return null;
 
-            if (mainGrid != null)
-            {
-                var mainCockpit = mainGrid.MainCockpit as IMyShipController;
-                if (mainCockpit != null && mainCockpit.IsFunctional && !(mainCockpit is IMyCryoChamber))
-                    return mainCockpit;
-            }
-
-            IMyShipController functionalCockpit = null;
+            // 1. Prioritize any actively piloted cockpit that aligns with forward propulsion
             foreach (IMyCubeGrid igrid in gridGroup)
             {
                 var grid = igrid as MyCubeGrid;
                 if (grid == null) continue;
-
-                var mc = grid.MainCockpit as IMyShipController;
-                if (mc != null && mc.IsFunctional && !(mc is IMyCryoChamber))
-                {
-                    if (mc.IsUnderControl)
-                        return mc;
-                    if (functionalCockpit == null)
-                        functionalCockpit = mc;
-                }
 
                 foreach (MyCubeBlock block in grid.GetFatBlocks())
                 {
                     var sc = block as IMyShipController;
                     if (sc != null && sc.IsFunctional && !(sc is IMyCryoChamber))
                     {
-                        if (sc.IsUnderControl)
+                        if ((sc.Pilot != null || sc.IsUnderControl) && IsAlignedWithThrusterForward(sc))
                             return sc;
-                        if (functionalCockpit == null)
+                    }
+                }
+            }
+
+            // 1b. Any actively piloted cockpit across the grid group
+            foreach (IMyCubeGrid igrid in gridGroup)
+            {
+                var grid = igrid as MyCubeGrid;
+                if (grid == null) continue;
+
+                foreach (MyCubeBlock block in grid.GetFatBlocks())
+                {
+                    var sc = block as IMyShipController;
+                    if (sc != null && sc.IsFunctional && !(sc is IMyCryoChamber))
+                    {
+                        if (sc.Pilot != null || sc.IsUnderControl)
+                            return sc;
+                    }
+                }
+            }
+
+            // 2. Designated Main Cockpit on mainGrid if it aligns with forward propulsion
+            if (mainGrid != null)
+            {
+                var mainCockpit = mainGrid.MainCockpit as IMyShipController;
+                if (mainCockpit != null && mainCockpit.IsFunctional && !(mainCockpit is IMyCryoChamber) && IsAlignedWithThrusterForward(mainCockpit))
+                    return mainCockpit;
+            }
+
+            // 3. Fallback to any functional cockpit aligned with forward thrusters (preferring actual IMyCockpit)
+            IMyShipController functionalCockpit = null;
+            foreach (IMyCubeGrid igrid in gridGroup)
+            {
+                var grid = igrid as MyCubeGrid;
+                if (grid == null) continue;
+
+                foreach (MyCubeBlock block in grid.GetFatBlocks())
+                {
+                    var sc = block as IMyShipController;
+                    if (sc != null && sc.IsFunctional && !(sc is IMyCryoChamber))
+                    {
+                        if (sc is IMyCockpit && IsAlignedWithThrusterForward(sc))
+                            return sc;
+                        if (functionalCockpit == null && IsAlignedWithThrusterForward(sc))
                             functionalCockpit = sc;
                     }
                 }

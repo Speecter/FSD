@@ -386,21 +386,35 @@ namespace WarpDriveMod
             var grid = MyEntities.GetEntityById(gridId) as MyCubeGrid;
             if (grid == null) return 999.0;
 
-            IMyCockpit cockpit = null;
-            IMyRemoteControl rc = null;
+            IMyShipController cockpit = null;
             foreach (var fat in grid.GetFatBlocks())
             {
-                var c = fat as IMyCockpit;
-                if (c != null && c.IsFunctional)
+                var drive = fat?.GameLogic?.GetAs<WarpDrive>();
+                if (drive?.hyperspace?.GridSystem != null)
                 {
-                    if (c.Pilot != null) { cockpit = c; break; }
-                    if (cockpit == null) cockpit = c;
+                    cockpit = drive.hyperspace.GridSystem.FindMainCockpit();
+                    if (cockpit != null) break;
                 }
-                var r = fat as IMyRemoteControl;
-                if (r != null && r.IsFunctional && rc == null) rc = r;
             }
 
-            MatrixD memberMatrix = (cockpit != null) ? cockpit.WorldMatrix : (rc != null ? rc.WorldMatrix : grid.WorldMatrix);
+            if (cockpit == null)
+            {
+                IMyRemoteControl rc = null;
+                foreach (var fat in grid.GetFatBlocks())
+                {
+                    var c = fat as IMyCockpit;
+                    if (c != null && c.IsFunctional)
+                    {
+                        if (c.Pilot != null) { cockpit = c; break; }
+                        if (cockpit == null) cockpit = c;
+                    }
+                    var r = fat as IMyRemoteControl;
+                    if (r != null && r.IsFunctional && rc == null) rc = r;
+                }
+                if (cockpit == null && rc != null) cockpit = rc;
+            }
+
+            MatrixD memberMatrix = (cockpit != null) ? cockpit.WorldMatrix : grid.WorldMatrix;
             Vector3D targetDir;
             if (lobby.Mode == HyperspaceSystem.JumpMode.GpsWaypoint && lobby.TargetGpsCoords.HasValue)
             {

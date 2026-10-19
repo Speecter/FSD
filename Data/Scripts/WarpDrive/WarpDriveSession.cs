@@ -292,13 +292,13 @@ namespace WarpDriveMod
         {
             WarpDrive drive = block?.GameLogic?.GetAs<WarpDrive>();
 
-            return HasValidSystem(drive) && drive.warpSystem.warpState != WarpSystem.State.idle;
+            return HasValidSystem(drive) && drive.supportsSupercruise && drive.warpSystem.warpState != WarpSystem.State.idle;
         }
 
         private void SetWarpStatus(IMyTerminalBlock block, bool state)
         {
             WarpDrive drive = block?.GameLogic?.GetAs<WarpDrive>();
-            if (!HasValidSystem(drive) || !MyAPIGateway.Multiplayer.IsServer)
+            if (!HasValidSystem(drive) || !MyAPIGateway.Multiplayer.IsServer || !drive.supportsSupercruise)
                 return;
 
             if (state != (drive.warpSystem.warpState != WarpSystem.State.idle))
@@ -328,6 +328,9 @@ namespace WarpDriveMod
                 return;
 
             WarpDrive drive = GetDrive(message.entityId);
+            if (drive == null || !drive.supportsSupercruise)
+                return;
+
             WarpSystem system = RefreshSystem(drive);
             if (system == null)
                     return;
@@ -564,7 +567,8 @@ namespace WarpDriveMod
 
         private bool IsWarpDrive(IMyTerminalBlock block)
         {
-            return block?.GameLogic?.GetAs<WarpDrive>() != null;
+            var drive = block?.GameLogic?.GetAs<WarpDrive>();
+            return drive != null && drive.supportsSupercruise;
         }
 
         public void QueueExposureCheck(HeatSink heatSink)
@@ -723,6 +727,9 @@ namespace WarpDriveMod
         private void ToggleWarp(IMyTerminalBlock block)
         {
             WarpDrive drive = block?.GameLogic?.GetAs<WarpDrive>();
+            if (drive == null || !drive.supportsSupercruise)
+                return;
+
             WarpSystem system = RefreshSystem(drive);
             if (system == null)
                 return;

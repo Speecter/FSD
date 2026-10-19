@@ -31,8 +31,8 @@ namespace WarpDriveMod
         {
             // Separator: Visual divider between Supercruise and Hyperspace
             var separator = MyAPIGateway.TerminalControls.CreateControl<IMyTerminalControlSeparator, IMyUpgradeModule>("HyperspaceSeparator");
-            separator.Enabled = IsHyperspaceDrive;
-            separator.Visible = IsHyperspaceDrive;
+            separator.Enabled = IsStandardHyperspaceDrive;
+            separator.Visible = IsStandardHyperspaceDrive;
             MyAPIGateway.TerminalControls.AddControl<IMyUpgradeModule>(separator);
 
             // Jump Button
@@ -505,6 +505,8 @@ namespace WarpDriveMod
                 var system = WarpDriveSession.instance.GetGridWarpSystem(grid);
                 if (system?.hyperspace?.hostDrive != null)
                     return system.hyperspace.hostDrive;
+                if (system?.capitalFSD?.hostDrive != null)
+                    return system.capitalFSD.hostDrive;
             }
 
             // Search local grid

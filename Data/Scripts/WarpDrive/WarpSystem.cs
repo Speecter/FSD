@@ -411,6 +411,12 @@ namespace WarpDriveMod
 
             if (warpState == State.idle)
             {
+                if (drive != null && !drive.supportsSupercruise)
+                {
+                    SendMessage("CAPITAL CLASS FSD CANNOT ENGAGE SUPERCRUISE", 4f, "Red", player.IdentityId);
+                    return;
+                }
+
                 IMyShipController seat = player.Character?.Parent as IMyShipController;
                 if (seat?.CubeGrid == null || !grid.Contains((MyCubeGrid)seat.CubeGrid) || !hasEnoughPower)
                     return;
@@ -797,6 +803,12 @@ namespace WarpDriveMod
         {
             if (grid.mainGrid == null)
                 return;
+
+            if (drive == null || !drive.supportsSupercruise)
+            {
+                SendMessage("CAPITAL CLASS FSD CANNOT ENGAGE SUPERCRUISE", 4f, "Red", playerID);
+                return;
+            }
 
             if (IsInGravity())
             {

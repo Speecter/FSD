@@ -148,6 +148,21 @@ namespace WarpDriveMod
         private int fsdLossTicks = 0;
         private int controlLossTicks = 0;
 
+        // Cached physical grids for zero-allocation velocity zeroing
+        private readonly List<IMyCubeGrid> _cachedPhysicalGrids = new List<IMyCubeGrid>();
+
+        // Saved thruster multipliers, enabled states, and light states for visual wipe restoration
+        private readonly Dictionary<long, float> _savedThrustMultipliers = new Dictionary<long, float>();
+        private readonly Dictionary<long, bool> _savedThrustEnabled = new Dictionary<long, bool>();
+        private readonly Dictionary<long, bool> _savedLightStates = new Dictionary<long, bool>();
+
+        // Transit smooth materialization
+        private readonly List<IMySlimBlock> _transitRevealBlocks = new List<IMySlimBlock>();
+        private int _transitRevealIndex = 0;
+        private int _transitRevealPerTick = 0;
+        private bool _isTransitRevealActive = false;
+        private const int TRANSIT_REVEAL_TICKS = 90; // ~1.5 seconds at 60 FPS
+
         // In-transit dynamic obstacle re-check flags (at 25%, 50%, and 90% progress)
         private bool checkedObstacle25 = false;
         private bool checkedObstacle50 = false;
@@ -211,6 +226,7 @@ namespace WarpDriveMod
             StopParticles();
             RestoreAllBlocksVisibility();
             SetGridInvincibility(false);
+            _cachedPhysicalGrids.Clear();
         }
 
         public double GetMaxJumpDistance(float powerMW = 100f)
@@ -664,9 +680,21 @@ namespace WarpDriveMod
             {
                 foreach (var fat in mainGrid.GetFatBlocks())
                 {
+                    var sc = fat as IMyCockpit;
+                    if (sc != null && sc.IsFunctional && !(sc is IMyCryoChamber))
+                    {
+                        if (GridSystem == null || GridSystem.IsAlignedWithThrusterForward(sc))
+                            return sc;
+                    }
+                }
+                foreach (var fat in mainGrid.GetFatBlocks())
+                {
                     var sc = fat as IMyShipController;
-                    if (sc != null && sc.IsFunctional)
-                        return sc;
+                    if (sc != null && sc.IsFunctional && !(sc is IMyCryoChamber))
+                    {
+                        if (GridSystem == null || GridSystem.IsAlignedWithThrusterForward(sc))
+                            return sc;
+                    }
                 }
             }
             return null;
@@ -827,8 +855,8 @@ namespace WarpDriveMod
             CollectPlayersOnGrid();
             SetPlayersSave(false);
 
-            // Re-reveal all blocks so inside the hyperspace tunnel the pilot sees their ship intact!
-            RestoreAllBlocksVisibility(false);
+            // Begin smooth nose-to-tail materialization inside the hyperspace tunnel
+            StartTransitSmoothReveal();
 
             StopWormholeParticles();
             StartTransitTunnelFX();
@@ -971,6 +999,7 @@ namespace WarpDriveMod
                 {
                     HyperspaceSunManager.Instance.RequestSuppression(this, true);
                     UpdateTransitTunnelFX();
+                    UpdateTransitSmoothReveal();
                     DrawHyperspaceBackdrop();
 
                     // Spectator check for grid visibility during transit
@@ -980,6 +1009,8 @@ namespace WarpDriveMod
 
                     if (isSpectator && !_spectatorHidden)
                     {
+                        _isTransitRevealActive = false;
+                        _transitRevealBlocks.Clear();
                         HideAllBlocks(currentWipe);
                         _spectatorHidden = true;
                     }
@@ -997,6 +1028,8 @@ namespace WarpDriveMod
                 else
                 {
                     HyperspaceSunManager.Instance.ReleaseSuppression(this, true);
+                    _isTransitRevealActive = false;
+                    _transitRevealBlocks.Clear();
 
                     // Local player stepped off the ship during transit — stop tunnel FX immediately
                     StopTransitParticles();
@@ -1082,6 +1115,9 @@ namespace WarpDriveMod
                 }
             }
 
+            _isTransitRevealActive = false;
+            _transitRevealBlocks.Clear();
+
             Vector3D exitWormholePos = JumpDestination;
             double totalTravelDist = shipLength + 5.0;
             double stepDist = totalTravelDist / (JUMP_OUT_WIPE_DURATION_SECONDS * 60.0);
@@ -1162,6 +1198,7 @@ namespace WarpDriveMod
             RestoreAllBlocksVisibility();
             SetGridInvincibility(false);
             ClearPhysicsVelocities();
+            _cachedPhysicalGrids.Clear();
             StopParticles();
             StopAllSounds();
 
@@ -1220,6 +1257,7 @@ namespace WarpDriveMod
             RestoreAllBlocksVisibility();
             SetGridInvincibility(false);
             ClearPhysicsVelocities();
+            _cachedPhysicalGrids.Clear();
 
             // Guarantee 500m clearance above ground on abort/drop
             if (mainGrid != null && (MyAPIGateway.Multiplayer.IsServer || MyAPIGateway.Utilities.IsDedicated))
@@ -1383,6 +1421,8 @@ namespace WarpDriveMod
             session.HiddenFatBlocks.Clear();
             session.AccumulatedTravel = 0.0;
 
+            RefreshCachedPhysicalGrids();
+
             var mainGrid = GridSystem?.mainGrid;
             if (mainGrid == null) return;
 
@@ -1396,8 +1436,9 @@ namespace WarpDriveMod
                 if (grid == null || grid.MarkedForClose) continue;
                 List<IMySlimBlock> blockList = new List<IMySlimBlock>();
                 grid.GetBlocks(blockList);
-                foreach (var block in blockList)
+                for (int i = 0; i < blockList.Count; i++)
                 {
+                    var block = blockList[i];
                     if (block == null) continue;
                     Vector3D blockCenter;
                     block.ComputeWorldCenter(out blockCenter);
@@ -1430,7 +1471,6 @@ namespace WarpDriveMod
                 if (session.AccumulatedTravel > data.TriggerTravel)
                 {
                     HideBlock(data.Block, session);
-                    session.HiddenBlocks.Add(data.Block);
                     session.BlocksToHide.RemoveAt(i);
                 }
                 else
@@ -1457,7 +1497,6 @@ namespace WarpDriveMod
                 if (session.AccumulatedTravel > data.TriggerTravel)
                 {
                     RevealBlock(data.Block, session);
-                    session.HiddenBlocks.Remove(data.Block);
                     session.BlocksToReveal.RemoveAt(i);
                 }
                 else
@@ -1469,15 +1508,130 @@ namespace WarpDriveMod
 
         private void HideAllBlocks(WipeSession session)
         {
-            foreach (var data in session.BlocksToReveal)
+            if (session == null || session.BlocksToReveal == null) return;
+            for (int i = 0; i < session.BlocksToReveal.Count; i++)
             {
-                HideBlock(data.Block, session);
-                session.HiddenBlocks.Add(data.Block);
+                var data = session.BlocksToReveal[i];
+                if (data.Block != null)
+                {
+                    HideBlock(data.Block, session);
+                }
+            }
+        }
+
+        private void StartTransitSmoothReveal()
+        {
+            _isTransitRevealActive = false;
+            _transitRevealBlocks.Clear();
+            _transitRevealIndex = 0;
+
+            if (MyAPIGateway.Utilities.IsDedicated) return;
+
+            var localPlayer = MyAPIGateway.Session?.Player;
+            bool isOnBoard = false;
+            if (localPlayer != null)
+            {
+                for (int i = 0; i < _playersInTransit.Count; i++)
+                {
+                    var p = _playersInTransit[i];
+                    if (p != null && p.IdentityId == localPlayer.IdentityId)
+                    {
+                        isOnBoard = true;
+                        break;
+                    }
+                }
+            }
+            if (!isOnBoard) return; // Outsiders keep the ship hidden!
+
+            // Populate blocks ordered from nose to tail
+            if (currentWipe != null && currentWipe.BlocksToReveal != null && currentWipe.BlocksToReveal.Count > 0)
+            {
+                int count = currentWipe.BlocksToReveal.Count;
+                // BlocksToReveal is sorted descending by TriggerTravel (tail at index 0, nose at index count - 1)
+                // Add in reverse so index 0 is nose, progressing to tail
+                for (int i = count - 1; i >= 0; i--)
+                {
+                    var b = currentWipe.BlocksToReveal[i].Block;
+                    if (b != null)
+                    {
+                        _transitRevealBlocks.Add(b);
+                    }
+                }
+            }
+            else
+            {
+                var mainGrid = GridSystem?.mainGrid;
+                if (mainGrid != null)
+                {
+                    List<IMyCubeGrid> attachedGrids = new List<IMyCubeGrid>();
+                    MyAPIGateway.GridGroups.GetGroup(mainGrid, GridLinkTypeEnum.Logical, attachedGrids);
+                    if (!attachedGrids.Contains(mainGrid))
+                        attachedGrids.Add(mainGrid);
+
+                    foreach (var grid in attachedGrids)
+                    {
+                        if (grid == null || grid.MarkedForClose) continue;
+                        List<IMySlimBlock> blockList = new List<IMySlimBlock>();
+                        grid.GetBlocks(blockList);
+                        _transitRevealBlocks.AddRange(blockList);
+                    }
+                }
+            }
+
+            if (_transitRevealBlocks.Count == 0) return;
+
+            _transitRevealPerTick = Math.Max(1, (_transitRevealBlocks.Count + TRANSIT_REVEAL_TICKS - 1) / TRANSIT_REVEAL_TICKS);
+            _isTransitRevealActive = true;
+        }
+
+        private void UpdateTransitSmoothReveal()
+        {
+            if (!_isTransitRevealActive) return;
+
+            int total = _transitRevealBlocks.Count;
+            int end = Math.Min(_transitRevealIndex + _transitRevealPerTick, total);
+
+            for (int i = _transitRevealIndex; i < end; i++)
+            {
+                var b = _transitRevealBlocks[i];
+                if (b != null)
+                {
+                    RevealBlock(b, currentWipe);
+                }
+            }
+
+            _transitRevealIndex = end;
+
+            if (_transitRevealIndex >= total)
+            {
+                _isTransitRevealActive = false;
+                _transitRevealBlocks.Clear();
+
+                var mainGrid = GridSystem?.mainGrid;
+                if (mainGrid != null)
+                {
+                    List<IMyCubeGrid> attachedGrids = new List<IMyCubeGrid>();
+                    MyAPIGateway.GridGroups.GetGroup(mainGrid, GridLinkTypeEnum.Logical, attachedGrids);
+                    if (!attachedGrids.Contains(mainGrid))
+                        attachedGrids.Add(mainGrid);
+
+                    foreach (var grid in attachedGrids)
+                    {
+                        var mg = grid as MyCubeGrid;
+                        if (mg != null && mg.Render != null)
+                        {
+                            mg.Render.Visible = true;
+                        }
+                    }
+                }
             }
         }
 
         public void RestoreAllBlocksVisibility(bool forceForAll = true)
         {
+            _isTransitRevealActive = false;
+            _transitRevealBlocks.Clear();
+
             var mainGrid = GridSystem?.mainGrid;
             if (mainGrid == null) return;
 
@@ -1487,8 +1641,9 @@ namespace WarpDriveMod
                 bool isOnBoard = false;
                 if (localPlayer != null)
                 {
-                    foreach (var p in _playersInTransit)
+                    for (int i = 0; i < _playersInTransit.Count; i++)
                     {
+                        var p = _playersInTransit[i];
                         if (p != null && p.IdentityId == localPlayer.IdentityId)
                         {
                             isOnBoard = true;
@@ -1509,9 +1664,13 @@ namespace WarpDriveMod
                 if (grid == null || grid.MarkedForClose) continue;
                 List<IMySlimBlock> blockList = new List<IMySlimBlock>();
                 grid.GetBlocks(blockList);
-                foreach (var b in blockList)
+                for (int i = 0; i < blockList.Count; i++)
                 {
-                    RevealBlock(b, currentWipe);
+                    var b = blockList[i];
+                    if (b != null)
+                    {
+                        RevealBlock(b, currentWipe);
+                    }
                 }
 
                 var mg = grid as MyCubeGrid;
@@ -1521,10 +1680,68 @@ namespace WarpDriveMod
                 }
             }
 
+            // Restore any remaining saved thrusters or lights
+            if (_savedThrustMultipliers.Count > 0)
+            {
+                foreach (var kvp in _savedThrustMultipliers)
+                {
+                    var ent = MyAPIGateway.Entities.GetEntityById(kvp.Key) as IMyThrust;
+                    if (ent != null && !ent.MarkedForClose)
+                    {
+                        ent.ThrustMultiplier = kvp.Value;
+                    }
+                }
+                _savedThrustMultipliers.Clear();
+            }
+
+            if (_savedThrustEnabled.Count > 0)
+            {
+                foreach (var kvp in _savedThrustEnabled)
+                {
+                    var ent = MyAPIGateway.Entities.GetEntityById(kvp.Key) as IMyThrust;
+                    if (ent != null && !ent.MarkedForClose)
+                    {
+                        ent.Enabled = kvp.Value;
+                    }
+                }
+                _savedThrustEnabled.Clear();
+            }
+
+            if (_savedLightStates.Count > 0)
+            {
+                foreach (var kvp in _savedLightStates)
+                {
+                    var ent = MyAPIGateway.Entities.GetEntityById(kvp.Key) as IMyLightingBlock;
+                    if (ent != null && !ent.MarkedForClose)
+                    {
+                        ent.Enabled = kvp.Value;
+                    }
+                }
+                _savedLightStates.Clear();
+            }
+
             if (currentWipe != null)
             {
                 currentWipe.HiddenBlocks.Clear();
                 currentWipe.HiddenFatBlocks.Clear();
+            }
+        }
+
+        private static void SetSubpartsTransparency(MyEntitySubpart subpart, float transparency)
+        {
+            if (subpart == null) return;
+            if (subpart.Render != null)
+            {
+                subpart.Render.Visible = true;
+                subpart.Render.Transparency = transparency;
+                subpart.Render.UpdateTransparency();
+            }
+            if (subpart.Subparts != null)
+            {
+                foreach (var child in subpart.Subparts.Values)
+                {
+                    SetSubpartsTransparency(child, transparency);
+                }
             }
         }
 
@@ -1535,12 +1752,72 @@ namespace WarpDriveMod
 
             try
             {
-                if (block.FatBlock != null && session != null)
-                {
-                    session.HiddenFatBlocks.Add(block.FatBlock);
-                }
-                
                 block.Dithering = -1f;
+
+                var fat = block.FatBlock;
+                if (fat != null)
+                {
+                    // Safeguard: Preserve the cockpit interior for the local seated pilot in first-person view
+                    bool isLocalFirstPersonCockpit = false;
+                    var cockpit = fat as IMyCockpit;
+                    if (cockpit != null && cockpit.Pilot != null)
+                    {
+                        var localChar = MyAPIGateway.Session?.Player?.Character;
+                        if (localChar != null && cockpit.Pilot.EntityId == localChar.EntityId && cockpit.IsInFirstPersonView)
+                        {
+                            isLocalFirstPersonCockpit = true;
+                        }
+                    }
+
+                    if (!isLocalFirstPersonCockpit)
+                    {
+                        var fatEntity = fat as MyCubeBlock;
+                        if (fatEntity != null)
+                        {
+                            if (fatEntity.Render != null)
+                            {
+                                fatEntity.Render.Transparency = -1f;
+                                fatEntity.Render.UpdateTransparency();
+                            }
+
+                            if (fatEntity.Subparts != null)
+                            {
+                                foreach (var sub in fatEntity.Subparts.Values)
+                                {
+                                    SetSubpartsTransparency(sub, -1f);
+                                }
+                            }
+                        }
+                    }
+
+                    // Suppress thruster flames and heat particles
+                    var thrust = fat as IMyThrust;
+                    if (thrust != null)
+                    {
+                        if (!_savedThrustMultipliers.ContainsKey(thrust.EntityId))
+                        {
+                            _savedThrustMultipliers[thrust.EntityId] = thrust.ThrustMultiplier;
+                        }
+                        thrust.ThrustMultiplier = 0f;
+
+                        if (!_savedThrustEnabled.ContainsKey(thrust.EntityId))
+                        {
+                            _savedThrustEnabled[thrust.EntityId] = thrust.Enabled;
+                        }
+                        thrust.Enabled = false;
+                    }
+
+                    // Suppress lighting block glare / cones
+                    var light = fat as IMyLightingBlock;
+                    if (light != null)
+                    {
+                        if (!_savedLightStates.ContainsKey(light.EntityId))
+                        {
+                            _savedLightStates[light.EntityId] = light.Enabled;
+                        }
+                        light.Enabled = false;
+                    }
+                }
             }
             catch (Exception) { }
         }
@@ -1552,12 +1829,73 @@ namespace WarpDriveMod
 
             try
             {
-                if (block.FatBlock != null && session != null)
-                {
-                    session.HiddenFatBlocks.Remove(block.FatBlock);
-                }
-                
                 block.Dithering = 0f;
+
+                var fat = block.FatBlock;
+                if (fat != null)
+                {
+                    var fatEntity = fat as MyCubeBlock;
+                    if (fatEntity != null)
+                    {
+                        if (fatEntity.Render != null)
+                        {
+                            fatEntity.Render.Visible = true;
+                            fatEntity.Render.Transparency = 0f;
+                            fatEntity.Render.UpdateTransparency();
+                        }
+
+                        if (fatEntity.Subparts != null)
+                        {
+                            foreach (var sub in fatEntity.Subparts.Values)
+                            {
+                                SetSubpartsTransparency(sub, 0f);
+                            }
+                        }
+                    }
+
+                    // Restore thruster flames
+                    var thrust = fat as IMyThrust;
+                    if (thrust != null)
+                    {
+                        float origMultiplier;
+                        if (_savedThrustMultipliers.TryGetValue(thrust.EntityId, out origMultiplier))
+                        {
+                            thrust.ThrustMultiplier = origMultiplier;
+                            _savedThrustMultipliers.Remove(thrust.EntityId);
+                        }
+                        else
+                        {
+                            thrust.ThrustMultiplier = 1f;
+                        }
+
+                        bool origEnabled;
+                        if (_savedThrustEnabled.TryGetValue(thrust.EntityId, out origEnabled))
+                        {
+                            thrust.Enabled = origEnabled;
+                            _savedThrustEnabled.Remove(thrust.EntityId);
+                        }
+                        else
+                        {
+                            thrust.Enabled = true;
+                        }
+                    }
+
+                    // Restore lights
+                    var light = fat as IMyLightingBlock;
+                    if (light != null)
+                    {
+                        bool origEnabled;
+                        if (_savedLightStates.TryGetValue(light.EntityId, out origEnabled))
+                        {
+                            light.Enabled = origEnabled;
+                            _savedLightStates.Remove(light.EntityId);
+                        }
+                        else
+                        {
+                            light.Enabled = true;
+                        }
+                    }
+                }
             }
             catch (Exception) { }
         }
@@ -1579,16 +1917,34 @@ namespace WarpDriveMod
             ClearPhysicsVelocities();
         }
 
+        private void RefreshCachedPhysicalGrids()
+        {
+            _cachedPhysicalGrids.Clear();
+            var mainGrid = GridSystem?.mainGrid;
+            if (mainGrid == null || mainGrid.MarkedForClose) return;
+
+            MyAPIGateway.GridGroups.GetGroup(mainGrid, GridLinkTypeEnum.Physical, _cachedPhysicalGrids);
+            if (!_cachedPhysicalGrids.Contains(mainGrid))
+            {
+                _cachedPhysicalGrids.Add(mainGrid);
+            }
+        }
+
         private void ClearPhysicsVelocities()
         {
             var mainGrid = GridSystem?.mainGrid;
             if (mainGrid == null) return;
 
-            List<IMyCubeGrid> attachedGrids = new List<IMyCubeGrid>();
-            MyAPIGateway.GridGroups.GetGroup(mainGrid, GridLinkTypeEnum.Physical, attachedGrids);
-
-            foreach (var g in attachedGrids)
+            if (_cachedPhysicalGrids.Count == 0)
             {
+                RefreshCachedPhysicalGrids();
+            }
+
+            for (int i = 0; i < _cachedPhysicalGrids.Count; i++)
+            {
+                var g = _cachedPhysicalGrids[i];
+                if (g == null || g.MarkedForClose) continue;
+
                 var mg = g as MyCubeGrid;
                 if (mg != null && mg.Physics != null)
                 {

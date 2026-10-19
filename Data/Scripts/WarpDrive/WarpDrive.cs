@@ -34,7 +34,7 @@ namespace WarpDriveMod
         {
             get
             {
-                if (block?.BlockDefinition == null) return false;
+                if (block?.BlockDefinition == null || isCapitalFSD) return false;
                 var sub = block.BlockDefinition.SubtypeId;
                 return sub.EndsWith("_A") || sub.EndsWith("_S")
                     || sub == "PrototechFSDriveLarge" || sub == "PrototechFSDriveSmall";
@@ -48,6 +48,7 @@ namespace WarpDriveMod
                 return block.BlockDefinition.SubtypeId == "PrototechFSDriveLarge_9S";
             }
         }
+        public bool supportsSupercruise => !isCapitalFSD;
         public bool isPrototech
         {
             get
@@ -103,7 +104,7 @@ namespace WarpDriveMod
 
         private void Block_AppendingCustomInfo(IMyTerminalBlock arg1, StringBuilder info)
         {
-            if (arg1 == null || Settings.instance == null || warpSystem == null)
+            if (arg1 == null || Settings.instance == null || warpSystem == null || !supportsSupercruise)
                 return;
 
             info?.AppendLine("Max Required Power: " + (WarpSystem.GetCruisePower(this, warpSystem.GetShipMass(), Settings.instance.maxSpeed) * powerMultiplier).ToString("N") + " MW");
