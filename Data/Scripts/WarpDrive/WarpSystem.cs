@@ -95,6 +95,10 @@ namespace WarpDriveMod
             warpDriveCounter.OnBlockRemoved += OnDriveRemoved;
             grid.AddCounter("WarpDrives", warpDriveCounter);
 
+            GridSystem.BlockCounter seatCounter = new GridSystem.BlockCounter((b) => b is IMyCockpit || b is IMyCryoChamber);
+            seatCounter.OnBlockAdded += (b) => { if (warpState == State.active) GetOnboardPlayers(); };
+            grid.AddCounter("Seats", seatCounter);
+
             grid.OnSystemInvalidated += OnSystemInvalidated;
 
             if (!MyAPIGateway.Utilities.IsDedicated && grid.mainGrid != null)
@@ -135,6 +139,19 @@ namespace WarpDriveMod
             if (WarpDriveSession.instance.runtime % 300 == 0)
                 GetPlayerList();
 
+            if (primaryDrive != null && primaryDrive.block.MarkedForClose)
+            {
+                if (warpState != State.idle)
+                {
+                    if (MyAPIGateway.Multiplayer.IsServer)
+                        SendMessage(warnDamagedHUD);
+
+                    Dewarp();
+                }
+
+                primaryDrive = null;
+            }
+
             if (warpDrives.Count == 0)
             {
                 grid.Invalidate();
@@ -151,6 +168,14 @@ namespace WarpDriveMod
             if (warpState == State.charging || warpState == State.active)
                 gridMatrix = grid.FindWorldMatrix(controlSeat);
 
+            if (warpState == State.active && currentSpeedPt > 1f)
+            {
+                gridMatrix.Translation += gridMatrix.Forward * currentSpeedPt;
+
+                if (MyAPIGateway.Multiplayer.IsServer)
+                    mainGrid.Teleport(gridMatrix);
+            }
+
             if (warpState == State.charging)
                 InSpool();
 
@@ -164,22 +189,16 @@ namespace WarpDriveMod
                         sound.PlaySound(WarpSound.cruiseOperatingSound, true);
                 }
 
-                if (InWarp() && currentSpeedPt > 1f)
-                {
-                    gridMatrix.Translation += gridMatrix.Forward * currentSpeedPt;
-
-                    if (MyAPIGateway.Multiplayer.IsServer)
-                        mainGrid.Teleport(gridMatrix);
-                }
+                InWarp();
             }
 
             isSleeping = warpState == State.idle && totalHeat <= 0f;
         }
 
-        private bool InWarp()
+        private void InWarp()
         {
             if (grid.mainGrid == null)
-                return false;
+                return;
 
             var mainGrid = grid.mainGrid;
 
@@ -196,7 +215,7 @@ namespace WarpDriveMod
             if (!MyAPIGateway.Multiplayer.IsServer)
             {
                 ClientSpeedInput();
-                return true;
+                return;
             }
 
             if (IsInGravity())
@@ -205,7 +224,7 @@ namespace WarpDriveMod
 
                 Dewarp(inAllowedGravity);
 
-                return false;
+                return;
             }
 
             IMyEntity obstacle = WarpDrive.ProximityDanger(gridMatrix, grid, currentSpeedPt);
@@ -216,7 +235,7 @@ namespace WarpDriveMod
                 Dewarp(true);
                 primaryDrive?.IsRestabilizing();
 
-                return false;
+                return;
             }
 
             if (!hasEnoughPower)
@@ -225,7 +244,7 @@ namespace WarpDriveMod
                 Dewarp();
                 primaryDrive?.IsRestabilizing();
 
-                return false;
+                return;
             }
 
             if (!primaryFunctional)
@@ -233,7 +252,7 @@ namespace WarpDriveMod
                 SendMessage(warnDamagedHUD);
                 Dewarp();
 
-                return false;
+                return;
             }
 
             if (primaryDrive.heat >= heatCapacity)
@@ -242,7 +261,7 @@ namespace WarpDriveMod
                 Dewarp();
                 primaryDrive?.IsRestabilizing();
 
-                return false;
+                return;
             }
 
             if (!MyAPIGateway.Utilities.IsDedicated)
@@ -255,13 +274,11 @@ namespace WarpDriveMod
                 Dewarp();
                 primaryDrive?.IsRestabilizing();
 
-                    return false;
+                    return;
                 }
 
             if (WarpDriveSession.instance.runtime % 11 == 0)
                 BroadcastSpeed();
-
-            return true;
         }
 
         public void Draw()
@@ -314,6 +331,24 @@ namespace WarpDriveMod
             if (!MyAPIGateway.Multiplayer.IsServer || drive?.block == null || player == null)
                 return;
 
+            State pressedState = warpState;
+            Toggle(drive, player);
+
+            if (warpState != pressedState)
+                return;
+
+            if (player.IdentityId != MyAPIGateway.Session?.Player?.IdentityId)
+                MyAPIGateway.Multiplayer.SendMessageTo(WarpDriveSession.warpStatePacket,
+                    MyAPIGateway.Utilities.SerializeToBinary(new WarpStateMessage { entityId = drive.block.EntityId, spoolStop = true }), player.SteamUserId);
+            else if (sound != null)
+            {
+                sound.PlaySound(WarpSound.spoolStop, true, force2D: true, alwaysHearOnRealistic: true);
+                sound.VolumeMultiplier = 1.5f;
+            }
+        }
+
+        private void Toggle(WarpDrive drive, IMyPlayer player)
+        {
             Wake();
 
             if (warpState == State.idle)
@@ -379,13 +414,24 @@ namespace WarpDriveMod
             if (drive == null || message == null || MyAPIGateway.Multiplayer.IsServer)
                 return;
 
+            if (message.spoolStop)
+            {
+                if (sound != null)
+                {
+                    sound.PlaySound(WarpSound.spoolStop, true, force2D: true, alwaysHearOnRealistic: true);
+                    sound.VolumeMultiplier = 1.5f;
+                }
+
+                return;
+            }
+
             Wake();
 
             State newState = (State)message.state;
 
             if (newState == State.idle)
             {
-                if (warpState != State.idle)
+                if (warpState != State.idle && drive == primaryDrive)
                     Dewarp(message.clearSpeed);
 
                 return;
@@ -519,11 +565,12 @@ namespace WarpDriveMod
 
                         var oxygenComponent = onlinePlayer.Character.Components?.Get<MyCharacterOxygenComponent>();
                         if (oxygenComponent != null && oxygenComponent.EnvironmentOxygenLevel >= MyCharacterOxygenComponent.LOW_OXYGEN_RATIO)
-                            playerOxygenSnapshot[onlinePlayer.IdentityId] = oxygenComponent.SuitOxygenLevel;
+                    playerOxygenSnapshot[onlinePlayer.IdentityId] = oxygenComponent.SuitOxygenLevel;
                     }
                 }
             }
 
+            MyAPIGateway.Session.OxygenProviderSystem.RemoveOxygenGenerator(this);
             if (playerOxygenSnapshot.Count > 0)
                 MyAPIGateway.Session.OxygenProviderSystem.AddOxygenGenerator(this);
         }
@@ -815,6 +862,11 @@ namespace WarpDriveMod
                     {
                         sound.PlaySound(isPrototech ? WarpSound.cruiseEndSoundProto : WarpSound.cruiseEndSound, true);
                         sound.VolumeMultiplier = 1;
+                    }
+                    else if (warpState == State.charging && IsPilot(MyAPIGateway.Session?.Player))
+                    {
+                        sound.PlaySound(WarpSound.spoolStop, true, force2D: true, alwaysHearOnRealistic: true);
+                        sound.VolumeMultiplier = 1.5f;
                     }
                 }
             }
@@ -1268,7 +1320,20 @@ namespace WarpDriveMod
         private void OnDriveAdded(IMyCubeBlock block)
         {
             WarpDrive drive = block.GameLogic.GetAs<WarpDrive>();
+            WarpSystem other = drive.warpSystem;
             HashSet<WarpDrive> gridDrives;
+
+            if (other != null && other != this)
+            {
+                if (other.warpState != State.idle && (warpState == State.idle || other.grid.blockCount > grid.blockCount))
+                {
+                    WarpSystemMerge(this, other);
+                    return;
+                }
+
+                WarpSystemMerge(other, this);
+            }
+
             drive.SetWarpSystem(this);
 
             if (!warpDrives.TryGetValue(block.CubeGrid, out gridDrives))
@@ -1279,6 +1344,23 @@ namespace WarpDriveMod
                 warpDrives[block.CubeGrid] = gridDrives;
 
             Wake();
+        }
+
+        private static void WarpSystemMerge(WarpSystem from, WarpSystem to)
+        {
+            foreach (IMyPlayer player in from.playersInWarpList)
+            {
+                if (!to.playersInWarpList.Contains(player))
+                    to.playersInWarpList.Add(player);
+            }
+
+            foreach (KeyValuePair<long, float> snapshot in from.playerOxygenSnapshot)
+                to.playerOxygenSnapshot[snapshot.Key] = snapshot.Value;
+
+            if (from.warpState != State.idle)
+                from.Dewarp();
+
+            from.grid.Invalidate();
         }
 
         private void OnDriveRemoved(IMyCubeBlock block)
@@ -1298,19 +1380,6 @@ namespace WarpDriveMod
             }
 
             Wake();
-
-            if (drive != null && drive == primaryDrive)
-            {
-                if (warpState != State.idle)
-                {
-                    if (MyAPIGateway.Multiplayer.IsServer)
-                        SendMessage(warnDamagedHUD);
-
-                    Dewarp();
-                }
-
-                primaryDrive = null;
-            }
         }
 
         public override bool Equals(object obj)
