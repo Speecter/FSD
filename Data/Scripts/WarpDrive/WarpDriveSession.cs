@@ -14,6 +14,7 @@ using Sandbox.Game.EntityComponents;
 using VRage.ModAPI;
 using VRage.Game.Entity;
 using ProtoBuf;
+using VRageMath;
 
 namespace WarpDriveMod
 {
@@ -28,6 +29,7 @@ namespace WarpDriveMod
         public static MySoundPair cruiseEndSoundProto = new MySoundPair("FSD_Proto_JumpOut", true);
         public static MySoundPair gravityGlideOn = new MySoundPair("glide_on", true);
         public static MySoundPair gravityGlideOff = new MySoundPair("glide_off", true);
+        public static MySoundPair spoolStop = new MySoundPair("ArcHudAntennaOff", true);
     }
 
     [ProtoContract]
@@ -65,6 +67,8 @@ namespace WarpDriveMod
         public bool clearSpeed { get; set; }
         [ProtoMember(7)]
         public long cockpitId { get; set; }
+        [ProtoMember(8)]
+        public bool spoolStop { get; set; }
     }
 
     [MySessionComponentDescriptor(MyUpdateOrder.Simulation)]
@@ -79,10 +83,14 @@ namespace WarpDriveMod
         private readonly Queue<HeatSink> exposureQueue = new Queue<HeatSink>();
         private readonly List<IMyPlayer> playerList = new List<IMyPlayer>();
         private bool _controlInit = false;
+        public bool debugDraw;
+        public bool debugProx = true;
+        private readonly MyStringId debugRayMaterial = MyStringId.GetOrCompute("Square");
         public const ushort warpTogglePacket = 4374;
         public const ushort warpSpeedPacket = 4378;
         public const ushort warpConfigPacket = 4389;
         public const ushort warpStatePacket = 4375;
+        public const ushort debugProxPacket = 4376;
 
         public WarpDriveSession()
         {
@@ -98,6 +106,7 @@ namespace WarpDriveMod
                 Settings.GetShared();
 
                 MyAPIGateway.Multiplayer.RegisterSecureMessageHandler(warpConfigPacket, ReceiveWarpConfig);
+                MyAPIGateway.Multiplayer.RegisterSecureMessageHandler(debugProxPacket, ReceiveDebugProx);
 
                 MyVisualScriptLogicProvider.PlayerLeftCockpit += PlayerLeftCockpit;
 
@@ -106,6 +115,9 @@ namespace WarpDriveMod
 
                 if (!MyAPIGateway.Utilities.IsDedicated && !MyAPIGateway.Multiplayer.IsServer)
                     RequestConfig();
+
+                if (!MyAPIGateway.Utilities.IsDedicated)
+                    MyAPIGateway.Utilities.MessageEntered += CommandRecieved;
             }
             catch (Exception)
             {
@@ -333,6 +345,61 @@ namespace WarpDriveMod
             system.PilotLeft(cockpit);
         }
 
+        private void CommandRecieved(string messageText, ref bool sendToOthers)
+        {
+            string[] words = messageText.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+            if (words.Length == 0 || !words[0].Equals("/FSD", StringComparison.OrdinalIgnoreCase))
+                return;
+
+            sendToOthers = false;
+
+            string setting = words.Length > 1 ? words[1].ToLowerInvariant() : "";
+            if (setting != "debugdraw" && setting != "debugprox")
+            {
+                MyAPIGateway.Utilities.ShowMessage("FSD", "Invalid command");
+                return;
+            }
+
+            bool state;
+            if (words.Length != 3 || !bool.TryParse(words[2], out state))
+            {
+                MyAPIGateway.Utilities.ShowMessage("FSD", "Invalid bool");
+                return;
+            }
+
+            if (setting == "debugdraw")
+            {
+                if (!MyAPIGateway.Multiplayer.IsServer)
+                {
+                    MyAPIGateway.Utilities.ShowMessage("FSD", "Unable to change debug settings. Player is not host!");
+                    return;
+                }
+
+                debugDraw = state;
+            }
+            else
+            {
+                if (MyAPIGateway.Session.PromoteLevel < MyPromoteLevel.Admin)
+                {
+                    MyAPIGateway.Utilities.ShowMessage("FSD", "Unable to change DebugProx. Player is not admin!");
+                    return;
+                }
+
+                if (MyAPIGateway.Multiplayer.IsServer)
+                debugProx = state;
+                else
+                    MyAPIGateway.Multiplayer.SendMessageToServer(debugProxPacket, new[] { state ? (byte)1 : (byte)0 });
+            }
+
+            MyAPIGateway.Utilities.ShowMessage("FSD", (setting == "debugdraw" ? "DebugDraw" : "DebugProx") + " set to " + (state ? "true" : "false"));
+        }
+
+        private void ReceiveDebugProx(ushort channel, byte[] data, ulong sender, bool fromServer)
+        {
+            if (MyAPIGateway.Multiplayer.IsServer && data.Length == 1 && MyAPIGateway.Session.GetUserPromoteLevel(sender) >= MyPromoteLevel.Admin)
+                debugProx = data[0] == 1;
+        }
+
         private bool IsWarpDrive(IMyTerminalBlock block)
         {
             return block?.GameLogic?.GetAs<WarpDrive>() != null;
@@ -350,6 +417,7 @@ namespace WarpDriveMod
         public override void Simulate()
         {
             runtime++;
+            WarpDrive.debugDraw.Clear();
 
                 int budget = Math.Max(1, (exposureQueue.Count + 119) / 120); //rate limiting for grids with tons of sinks
                 while (budget-- > 0 && exposureQueue.Count > 0)
@@ -393,6 +461,13 @@ namespace WarpDriveMod
 
             foreach (WarpSystem s in warpSystems)
                 s.Draw();
+
+            if (!debugDraw)
+                return;
+
+            Vector4 color = Color.Yellow;
+            foreach (LineD ray in WarpDrive.debugDraw)
+                MySimpleObjectDraw.DrawLine(ray.From, ray.To, debugRayMaterial, ref color, 0.5f);
         }
 
         public WarpSystem GetGridWarpSystem(MyCubeGrid grid)
@@ -484,9 +559,11 @@ namespace WarpDriveMod
                 MyAPIGateway.Multiplayer.UnregisterSecureMessageHandler(warpSpeedPacket, ReceiveWarpSpeed);
                 MyAPIGateway.Multiplayer.UnregisterSecureMessageHandler(warpStatePacket, ReceiveWarpState);
                 MyAPIGateway.Multiplayer.UnregisterSecureMessageHandler(warpConfigPacket, ReceiveWarpConfig);
+                MyAPIGateway.Multiplayer.UnregisterSecureMessageHandler(debugProxPacket, ReceiveDebugProx);
 
                 MyVisualScriptLogicProvider.PlayerLeftCockpit -= PlayerLeftCockpit;
                 MyVisualScriptLogicProvider.PlayerDisconnected -= PlayerDisconnected;
+                MyAPIGateway.Utilities.MessageEntered -= CommandRecieved;
 
                 exposureQueue.Clear();
 
