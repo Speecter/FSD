@@ -36,7 +36,7 @@ namespace WarpDriveMod
         public const float STANDBY_POWER_MW = 0.001f;
         public const int CHARGE_TOTAL_TICKS = 45 * 60; // 45 seconds (2700 ticks)
         public const int COOLDOWN_TOTAL_TICKS = 10 * 60 * 60; // 10 minutes (36000 ticks)
-        public const double FIELD_RADIUS_METERS = 25000.0; // 25 km sphere
+        public const double FIELD_RADIUS_METERS = 50000.0; // 25 km sphere
 
         public IMyFunctionalBlock Block { get; private set; }
         public MyCubeGrid MainGrid => Block?.CubeGrid as MyCubeGrid;

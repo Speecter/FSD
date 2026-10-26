@@ -25,6 +25,8 @@ namespace WarpDriveMod
         public const double MIN_SPEED_MPS = 10000.0;     // never crawl, even if caught during the departure ramp
         public const double SPREAD_DEG = 5.0;
         public const double FOLLOW_STANDOFF_METERS = 800.0; // the hyperdictor lands this far behind the victim
+        public const float REFERENCE_MASS_KG = 1807008f;    // tuned ship: full-strength effects at or below this mass, weaker above
+        public const float MIN_SCALE = 0.25f;
 
         public long VictimGridId { get; private set; }
         public long HyperdictorBlockId { get; private set; }
@@ -47,14 +49,14 @@ namespace WarpDriveMod
 
         /// <param name="catchPos">World position of the grid's local AABB center at the moment of the catch.</param>
         /// <param name="localCenter">Grid local AABB center (offset between grid origin and rotation pivot).</param>
-        public HyperdictionSequence(long victimGridId, long hyperdictorBlockId, int seed, bool isCapital,
+        public HyperdictionSequence(long victimGridId, long hyperdictorBlockId, int seed, bool isCapital, float massKg,
             Vector3D catchPos, Vector3D dropPos, MatrixD catchOrientation, Vector3D catchDirection, Vector3D localCenter)
         {
             VictimGridId = victimGridId;
             HyperdictorBlockId = hyperdictorBlockId;
             Seed = seed;
             IsCapital = isCapital;
-            Scale = isCapital ? 0.5f : 1.0f;
+            Scale = ScaleForMass(massKg);
             CatchPos = catchPos;
             DropPos = dropPos;
             catchOrientation.Translation = Vector3D.Zero;
@@ -66,6 +68,21 @@ namespace WarpDriveMod
             ControlPos = catchPos + CatchDirection * (d * 0.5);
 
             BuildKeyFrames();
+        }
+
+        /// <summary>Effect strength by mass: 1.0 up to REFERENCE_MASS_KG, then falls off as sqrt(reference / mass) (4x the reference = 0.5), never below MIN_SCALE.</summary>
+        public static float ScaleForMass(float massKg)
+        {
+            if (massKg <= REFERENCE_MASS_KG) return 1.0f;
+            return Math.Max(MIN_SCALE, (float)Math.Sqrt(REFERENCE_MASS_KG / massKg));
+        }
+
+        /// <summary>Physical mass of the grid (including connected physical grids), 0 if unavailable.</summary>
+        public static float MassOf(MyCubeGrid grid)
+        {
+            if (grid == null) return 0f;
+            float baseMass, physicalMass;
+            return grid.GetCurrentMass(out baseMass, out physicalMass, GridLinkTypeEnum.Physical);
         }
 
         private readonly float[] simYaw = new float[TOTAL_TICKS + 1];
@@ -88,14 +105,30 @@ namespace WarpDriveMod
             return x * x * (3f - 2f * x);
         }
 
-        /// <summary>Overall intensity of the ride, 1.0 (calm) to 1.5 (peak). Eases in to a mild buzz before the first yank, then builds.</summary>
+        /// <summary>Overall intensity of the ride, 1.0 (calm) to 1.5 (peak). Eases in to a mild buzz before the first yank, then builds.
+        /// After the second yank it only relaxes to a steady rumble (never to calm); kicks lift it back up via KickProximity.</summary>
+        private const float RUMBLE_FLOOR = 1.25f;
+
         private static float Envelope(int tick)
         {
             if (tick < 130) return 1.0f + 0.25f * Smooth(tick / 130f);
             if (tick < 242) return 1.25f + 0.25f * Smooth((tick - 130f) / 50f);
-            if (tick < 300) return 1.5f - 0.5f * Smooth((tick - 242) / 58f);
-            if (tick < 380) return 1.0f;
-            return 1.0f + 0.5f * Smooth((tick - 380) / (TOTAL_TICKS - 380f));
+            if (tick < 300) return 1.5f - (1.5f - RUMBLE_FLOOR) * Smooth((tick - 242) / 58f);
+            if (tick < 380) return RUMBLE_FLOOR;
+            return RUMBLE_FLOOR + (1.5f - RUMBLE_FLOOR) * Smooth((tick - 380) / (TOTAL_TICKS - 380f));
+        }
+
+        /// <summary>0..~1 boost for how close a jolt or roll is: ramps up shortly before it and decays slowly after.</summary>
+        private float KickProximity(int tick)
+        {
+            float p = 0f;
+            for (int i = 0; i < kicks.Count; i++)
+            {
+                float d = tick - kicks[i].Tick;
+                float w = 0.5f + 0.5f * kicks[i].Weight;
+                p += w * (float)Math.Exp(d < 0 ? d / 6.0 : -d / 16.0);
+            }
+            return Math.Min(p, 1f);
         }
 
         /// <summary>
@@ -175,7 +208,7 @@ namespace WarpDriveMod
             for (int tick = 0; tick <= TOTAL_TICKS; tick++)
             {
                 float time = tick / 60f;
-                float env = MathHelper.Clamp((Envelope(tick) - 1f) / 0.5f, 0f, 1f);
+                float env = MathHelper.Clamp((Envelope(tick) - 1f) / 0.5f + 0.4f * KickProximity(tick), 0f, 1f);
 
                 while (nextKick < kicks.Count && kicks[nextKick].Tick <= tick)
                     active.Add(kicks[nextKick++]);
@@ -194,7 +227,7 @@ namespace WarpDriveMod
                 float swayEnv = env * Smooth((tick - 140f) / 50f);
 
                 // After the second yank the track "catches" the ship: heavier damping while it re-centers
-                float dampMul = tick > 236 && tick < 330 ? 1.4f : 1f;
+                float dampMul = tick > 236 && tick < 330 ? 1.2f : 1f;
 
                 for (int n = 0; n < SUB; n++)
                 {

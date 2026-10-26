@@ -2521,7 +2521,7 @@ namespace WarpDriveMod
             Vector3D localCenter = mainGrid.PositionComp.LocalAABB.Center;
             Vector3D catchCenter = Vector3D.Transform(localCenter, mainGrid.WorldMatrix);
 
-            Hyperdiction = new HyperdictionSequence(mainGrid.EntityId, hyperdictorBlockId, seed, false,
+            Hyperdiction = new HyperdictionSequence(mainGrid.EntityId, hyperdictorBlockId, seed, false, HyperdictionSequence.MassOf(mainGrid),
                 catchCenter, dropPos, JumpOrientation, JumpDirection, localCenter);
             hyperdictionLeadFxSpawned = false;
             lastHyperdictionPose = null;
