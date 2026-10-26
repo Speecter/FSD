@@ -14,6 +14,7 @@ using VRage.Game.Models;
 using VRage.ModAPI;
 using VRage.ObjectBuilders;
 using VRage.Utils;
+using VRage.Voxels;
 using VRageMath;
 
 namespace WarpDriveMod
@@ -83,6 +84,9 @@ namespace WarpDriveMod
         private bool sinkUpdated = false;
         private int countdownTick;
         private float powerMultiplier = 1;
+        public static readonly List<LineD> debugDraw = new List<LineD>();
+        private static readonly MyStorageData coarseRock = new MyStorageData(MyStorageDataTypeFlags.Content);
+        private static readonly MyStorageData fineRock = new MyStorageData(MyStorageDataTypeFlags.Content);
 
         public override void Init(MyObjectBuilder_EntityBase objectBuilder)
         {
@@ -214,46 +218,41 @@ namespace WarpDriveMod
         public static IMyEntity ProximityDanger(MatrixD gridMatrix, GridSystem gridSystem, double gridSpeed, bool spooling = false)
         {
             IMyCubeGrid mainGrid = gridSystem?.mainGrid;
-            if (mainGrid == null || (spooling && mainGrid.Physics == null))
+            if (mainGrid == null || (spooling && mainGrid.Physics == null) || !WarpDriveSession.instance.debugProx)
                 return null;
 
-            MatrixD toMainGrid = mainGrid.WorldMatrixNormalizedInv;
+            MatrixD toSeat = MatrixD.Invert(gridMatrix);
             BoundingBoxD shipBox = BoundingBoxD.CreateInvalid();
             foreach (IMyCubeGrid connectedGrid in gridSystem.gridGroup)
             {
                 BoundingBox gridBox = connectedGrid.LocalAABB;
-                shipBox = BoundingBoxD.CreateMerged(shipBox, new BoundingBoxD(gridBox.Min, gridBox.Max).TransformFast(connectedGrid.WorldMatrix * toMainGrid));
+                shipBox = BoundingBoxD.CreateMerged(shipBox, new BoundingBoxD(gridBox.Min, gridBox.Max).TransformFast(connectedGrid.WorldMatrix * toSeat));
             }
 
-            Vector3D center = Vector3D.Transform(shipBox.Center, mainGrid.WorldMatrix);
+            Vector3D center = Vector3D.Transform(shipBox.Center, gridMatrix);
             Vector3D forward = gridMatrix.Forward;
+            double pathWidth = shipBox.HalfExtents.X * 1.2;
+            double pathHeight = shipBox.HalfExtents.Y * 1.2;
+            LineD path = new LineD(center - forward * shipBox.HalfExtents.Z, center + forward * (shipBox.HalfExtents.Z + Math.Max(500.0, gridSpeed)));
+            var pathBox = new MyOrientedBoundingBoxD((path.From + path.To) / 2, new Vector3D(pathWidth, pathHeight, path.Length / 2), Quaternion.CreateFromRotationMatrix(gridMatrix));
 
-            Vector3D shipSize = shipBox.Size;
-            double alongX = Math.Abs(Vector3D.Dot(mainGrid.WorldMatrix.Right, forward));
-            double alongY = Math.Abs(Vector3D.Dot(mainGrid.WorldMatrix.Up, forward));
-            double alongZ = Math.Abs(Vector3D.Dot(mainGrid.WorldMatrix.Forward, forward));
+            if (WarpDriveSession.instance.debugDraw)
+            {
+                var boxCorners = new Vector3D[8];
+                for (int i = 0; i < 8; i++)
+                    boxCorners[i] = pathBox.Center + gridMatrix.Right * ((i & 1) == 0 ? -pathWidth : pathWidth) + gridMatrix.Up * ((i & 2) == 0 ? -pathHeight : pathHeight) + forward * ((i & 4) == 0 ? -path.Length / 2 : path.Length / 2);
 
-            double shipLength, pathRadius;
-            if (alongX >= alongY && alongX >= alongZ)
-            {
-                shipLength = shipSize.X;
-                pathRadius = Math.Max(shipSize.Y, shipSize.Z) / 2;
-            }
-            else if (alongY >= alongZ)
-            {
-                shipLength = shipSize.Y;
-                pathRadius = Math.Max(shipSize.X, shipSize.Z) / 2;
-            }
-            else
-            {
-                shipLength = shipSize.Z;
-                pathRadius = Math.Max(shipSize.X, shipSize.Y) / 2;
+                for (int i = 0; i < 8; i++)
+                {
+                    for (int bit = 1; bit < 8; bit <<= 1)
+                    {
+                        if ((i & bit) == 0)
+                            debugDraw.Add(new LineD(boxCorners[i], boxCorners[i | bit]));
+                    }
+                }
             }
 
-            Vector3D pathStart = spooling ? (center + forward * (shipLength / 2.0)) : (center - forward * (shipLength / 2.0 - pathRadius));
-            LineD path = new LineD(pathStart, center + forward * (shipLength / 2.0 + 500.0));
-
-            var sphere = new BoundingSphereD((path.From + path.To) / 2, path.Length / 2 + pathRadius);
+            var sphere = new BoundingSphereD(pathBox.Center, pathBox.HalfExtent.Length());
             List<IMyEntity> entList = MyAPIGateway.Entities.GetTopMostEntitiesInSphere(ref sphere);
 
             if (entList == null || entList.Count == 0)
@@ -269,12 +268,13 @@ namespace WarpDriveMod
             foreach (var ent in entList)
             {
                 var character = ent as IMyCharacter;
+                var zone = ent as MySafeZone;
                 if (character != null)
                 {
                     if (spooling || character.IsDead)
                         continue;
                 }
-                else if (!(ent is MySafeZone) || Settings.instance.AllowInSafeZone)
+                else if (zone == null || Settings.instance.AllowInSafeZone || !zone.Enabled)
                 {
                     if (!(ent is MyCubeGrid || ent is MyVoxelBase))
                         continue;
@@ -305,13 +305,21 @@ namespace WarpDriveMod
                         }
                     }
                 }
+                else if (zone.Shape == MySafeZoneShape.Sphere)
+                {
+                    var zoneSphere = new BoundingSphereD(ent.GetPosition(), zone.Radius);
+                    if (pathBox.Intersects(ref zoneSphere))
+                        return ent;
+
+                    continue;
+                }
 
                 var planet = ent as MyPlanet ?? (ent as MyVoxelBase)?.RootVoxel as MyPlanet;
                 if (planet != null)
                 {
                     BoundingBoxD planetBox = new BoundingBoxD(
-                        Vector3D.Min(path.From, path.To) - new Vector3D(pathRadius),
-                        Vector3D.Max(path.From, path.To) + new Vector3D(pathRadius)
+                        Vector3D.Min(path.From, path.To) - new Vector3D(Math.Max(pathWidth, pathHeight)),
+                        Vector3D.Max(path.From, path.To) + new Vector3D(Math.Max(pathWidth, pathHeight))
                     );
 
                     if (planet.PositionComp.WorldAABB.Intersects(planetBox) && planet.GetIntersectionWithAABB(ref planetBox))
@@ -320,32 +328,78 @@ namespace WarpDriveMod
                     continue;
                 }
 
-                MatrixD toLocal = ent.WorldMatrixNormalizedInv;
-                LineD localPath = new LineD(Vector3D.Transform(path.From, toLocal), Vector3D.Transform(path.To, toLocal));
-                BoundingBoxD obstacleBox = new BoundingBoxD(ent.LocalAABB.Min - new Vector3D(pathRadius), ent.LocalAABB.Max + new Vector3D(pathRadius));
-                double hitDistance;
+                var obstacleBox = new MyOrientedBoundingBoxD(new BoundingBoxD(ent.LocalAABB.Min, ent.LocalAABB.Max), ent.WorldMatrix);
 
-                if (!obstacleBox.Intersects(ref localPath, out hitDistance))
+                if (!pathBox.Intersects(ref obstacleBox))
                     continue;
 
                 if (!(ent is MyVoxelMap))
                     return ent;
 
-                Vector3D rayOrigin = spooling ? (center + forward * (shipLength / 2.0)) : (center - forward * (shipLength / 2.0));
+                IMyVoxelBase asteroid = (IMyVoxelBase)ent;
+                double widestSide = Math.Max(pathWidth, pathHeight);
+                int coarseLod = Math.Max(3, Math.Min(5, (int)Math.Ceiling(Math.Log(widestSide / 4, 2))));
+                int fineLod = coarseLod - 3;
+                double coarseSize = 1 << coarseLod;
+                double fineSize = 1 << fineLod;
+                Vector3D storageOrigin = asteroid.PositionLeftBottomCorner;
+                Vector3I coarseLimit = (asteroid.Storage.Size >> coarseLod) - 1;
+                int segments = (int)Math.Ceiling(path.Length / (2 * widestSide));
+                double segmentLength = path.Length / segments;
+                Vector3D segmentExtent = Vector3D.Abs(gridMatrix.Right * pathWidth) + Vector3D.Abs(gridMatrix.Up * pathHeight) + Vector3D.Abs(forward * (segmentLength / 2));
 
-                int rings = Math.Max(1, Math.Min(8, (int)Math.Ceiling(pathRadius / 5)));
-                for (int ring = 0; ring <= rings; ring++)
+                for (int segment = 0; segment < segments; segment++)
                 {
-                    int count = Math.Max(1, (int)Math.Ceiling(2 * Math.PI * ring));
-                    for (int i = 0; i < count; i++)
-                    {
-                        double angle = WarpDriveSession.instance.runtime * ring * 2.39996 + i * 2 * Math.PI / count;
-                        Vector3D offset = (gridMatrix.Right * Math.Cos(angle) + gridMatrix.Up * Math.Sin(angle)) * (pathRadius * ring / rings);
-                        LineD ray = new LineD(rayOrigin + offset, path.To + offset);
-                        MyIntersectionResultLineTriangleEx? meshHit;
+                    Vector3D segmentCenter = path.From + forward * (segmentLength * (segment + 0.5));
+                    Vector3I coarseMin = Vector3I.Max(Vector3I.Floor((segmentCenter - segmentExtent - storageOrigin) / coarseSize), Vector3I.Zero);
+                    Vector3I coarseMax = Vector3I.Min(Vector3I.Floor((segmentCenter + segmentExtent - storageOrigin) / coarseSize), coarseLimit);
+                    if (coarseMin.X > coarseMax.X || coarseMin.Y > coarseMax.Y || coarseMin.Z > coarseMax.Z)
+                        continue;
 
-                        if (ent.GetIntersectionWithLine(ref ray, out meshHit, IntersectionFlags.ALL_TRIANGLES))
-                            return ent;
+                    coarseRock.Resize(coarseMin, coarseMax);
+                    asteroid.Storage.ReadRange(coarseRock, MyStorageDataTypeFlags.Content, coarseLod, coarseMin, coarseMax);
+
+                    for (int z = 0; z <= coarseMax.Z - coarseMin.Z; z++)
+                    {
+                        for (int y = 0; y <= coarseMax.Y - coarseMin.Y; y++)
+                        {
+                            for (int x = 0; x <= coarseMax.X - coarseMin.X; x++)
+                            {
+                                byte content = coarseRock.Content(x, y, z);
+                                if (content == 0)
+                                    continue;
+
+                                Vector3I coarseCell = coarseMin + new Vector3I(x, y, z);
+                                Vector3D cellMin = storageOrigin + coarseCell * coarseSize;
+                                var cellBox = new BoundingBoxD(cellMin, cellMin + coarseSize);
+                                if (!pathBox.Intersects(ref cellBox))
+                                    continue;
+
+                                if (content == byte.MaxValue)
+                                    return ent;
+
+                                Vector3I fineMin = coarseCell * 8;
+                                Vector3I fineMax = fineMin + 7;
+                                fineRock.Resize(fineMin, fineMax);
+                                asteroid.Storage.ReadRange(fineRock, MyStorageDataTypeFlags.Content, fineLod, fineMin, fineMax);
+
+                                for (int fz = 0; fz < 8; fz++)
+                                {
+                                    for (int fy = 0; fy < 8; fy++)
+                                    {
+                                        for (int fx = 0; fx < 8; fx++)
+                                        {
+                                            if (fineRock.Content(fx, fy, fz) <= 127)
+                                                continue;
+
+                                            Vector3D rockPoint = storageOrigin + (fineMin + new Vector3I(fx, fy, fz)) * fineSize + fineSize / 2;
+                                            if (pathBox.Contains(ref rockPoint))
+                                                return ent;
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }

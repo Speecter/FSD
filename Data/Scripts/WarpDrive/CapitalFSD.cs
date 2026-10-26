@@ -18,7 +18,7 @@ using VRageMath;
 
 namespace WarpDriveMod
 {
-    public class CapitalFSD
+    public class CapitalFSD : IHyperdictionVictim
     {
         public enum CapState
         {
@@ -113,6 +113,19 @@ namespace WarpDriveMod
 
         // Players in transit - Character.Save suppression
         private readonly List<IMyPlayer> _playersInTransit = new List<IMyPlayer>();
+
+        // Hyperdiction: non-null while a Hyperdictor has pulled this ship into the 9s interdiction sequence
+        public HyperdictionSequence Hyperdiction { get; private set; }
+        public bool IsHyperdicted { get { return Hyperdiction != null; } }
+        private MyEntity3DSoundEmitter hyperdictionSound;
+        private bool hyperdictionLeadFxSpawned = false;
+        private long catchRemainingTicks = 0;
+        private bool hyperdictionAftermath = false;
+        private int blackoutTicks = 0;
+        private readonly List<IMyPowerProducer> blackoutProducers = new List<IMyPowerProducer>();
+
+        public MyCubeGrid HyperdictionGrid { get { return GridSystem?.mainGrid; } }
+        public bool CanBeHyperdicted { get { return State == CapState.Transit && Hyperdiction == null && GridSystem?.mainGrid != null && !GridSystem.mainGrid.MarkedForClose; } }
 
         private static readonly MyStringId SkyMaterial = MyStringId.GetOrCompute("Square");
         private static readonly Vector4 SkyColorVec4 = new Vector4(0.005f, 0.008f, 0.02f, 1.0f);
@@ -432,6 +445,9 @@ namespace WarpDriveMod
         public void Update()
         {
             EnsureGridSystem();
+
+            if (blackoutTicks > 0)
+                UpdateBlackout();
 
             if (State == CapState.Idle) return;
 
@@ -864,10 +880,261 @@ namespace WarpDriveMod
             SendNotification("HYPERSPACE TRANSIT ACTIVE", 4f, "Cyan");
         }
 
+        // ------------------------------------------------------------------ Hyperdiction
+
+        private static bool IsAuthorityMachine { get { return MyAPIGateway.Multiplayer.IsServer || MyAPIGateway.Utilities.IsDedicated; } }
+
+        /// <summary>
+        /// A Hyperdictor caught this ship. Starts the deterministic 9s sequence at half intensity (capital ships are heavier).
+        /// </summary>
+        public bool IsTrackable { get { return CanBeHyperdicted; } }
+
+        public bool TryGetTransitPlan(out HyperdictionTransitPlan plan)
+        {
+            plan = null;
+            if (!CanBeHyperdicted || JumpDirection.LengthSquared() < 0.001 || stateTotalTicks <= 0)
+                return false;
+
+            plan = new HyperdictionTransitPlan
+            {
+                Origin = JumpOrigin,
+                Direction = Vector3D.Normalize(JumpDirection),
+                Distance = JumpDistance,
+                ElapsedSeconds = stateElapsedTicks / 60.0,
+                TotalSeconds = stateTotalTicks / 60.0,
+                AccelSeconds = HyperspaceSystem.TRANSIT_ACCEL_SECONDS,
+                DecelSeconds = 0.0,
+                InTransit = true
+            };
+            return true;
+        }
+
+        public bool BeginHyperdiction(long hyperdictorBlockId, int seed, Vector3D dropPos)
+        {
+            var mainGrid = GridSystem?.mainGrid;
+            if (!CanBeHyperdicted || mainGrid == null)
+                return false;
+
+            Vector3D localCenter = mainGrid.PositionComp.LocalAABB.Center;
+            Vector3D catchCenter = Vector3D.Transform(localCenter, mainGrid.WorldMatrix);
+
+            Hyperdiction = new HyperdictionSequence(mainGrid.EntityId, hyperdictorBlockId, seed, true,
+                catchCenter, dropPos, JumpOrientation, JumpDirection, localCenter);
+            hyperdictionLeadFxSpawned = false;
+            catchRemainingTicks = Math.Max(0L, stateTotalTicks - stateElapsedTicks);
+
+            if (!MyAPIGateway.Utilities.IsDedicated)
+            {
+                if (transitSound != null && transitSound.IsPlaying)
+                    transitSound.StopSound(true);
+
+                if (IsLocalPlayerOnboard())
+                {
+                    if (hyperdictionSound == null)
+                        hyperdictionSound = new MyEntity3DSoundEmitter(null) { CanPlayLoopSounds = false };
+
+                    hyperdictionSound.SetPosition(GetListenerAnchor(catchCenter));
+                    hyperdictionSound.SetVelocity(Vector3.Zero);
+                    hyperdictionSound.PlaySound(WarpSound.hyperdiction, true);
+                }
+            }
+
+            SendNotification("CAPITAL FSD CONDUIT DESTABILIZING - HYPERDICTION DETECTED", 6f, "Red");
+            return true;
+        }
+
+        /// <summary>
+        /// The Hyperdictor failed mid-sequence: start a fresh transit leg from the current position to the original destination
+        /// and let the rotation offsets settle back to neutral over 2 seconds.
+        /// </summary>
+        public void AbortHyperdiction()
+        {
+            var seq = Hyperdiction;
+            var mainGrid = GridSystem?.mainGrid;
+            if (seq == null || seq.IsRecovering || mainGrid == null)
+                return;
+
+            Vector3D currentPos = mainGrid.PositionComp.GetPosition();
+            Vector3D toDest = JumpDestination - currentPos;
+            double dist = toDest.Length();
+
+            if (dist > 1.0)
+            {
+                Vector3D newDir = toDest / dist;
+                Vector3D oldDir = JumpDirection;
+
+                Vector3D axis = Vector3D.Cross(oldDir, newDir);
+                double axisLen = axis.Length();
+                if (axisLen > 1e-6)
+                {
+                    MatrixD aimed = JumpOrientation * MatrixD.CreateFromAxisAngle(axis / axisLen, Math.Atan2(axisLen, Vector3D.Dot(oldDir, newDir)));
+                    aimed.Translation = Vector3D.Zero;
+                    JumpOrientation = aimed;
+                }
+
+                JumpOrigin = currentPos;
+                JumpDirection = newDir;
+                JumpDistance = dist;
+            }
+
+            stateElapsedTicks = 0;
+            stateTotalTicks = Math.Max(catchRemainingTicks, 180L);
+            TransitDuration = stateTotalTicks / 60f;
+            checkedObstacle25 = false;
+            checkedObstacle50 = false;
+            checkedObstacle90 = false;
+
+            seq.RecoverStartTick = seq.ElapsedTicks;
+
+            if (hyperdictionSound != null && hyperdictionSound.IsPlaying)
+                hyperdictionSound.StopSound(false);
+
+            SendNotification("HYPERDICTION FIELD COLLAPSED - RESUMING TRANSIT", 4f, "White");
+        }
+
+        /// <summary>
+        /// The 9s sequence ended: open the exit portal at the drop point next to the Hyperdictor.
+        /// The blackout and tumble are applied when the ship finishes emerging (FinishJump).
+        /// </summary>
+        public void HyperdictionDrop()
+        {
+            var seq = Hyperdiction;
+            var mainGrid = GridSystem?.mainGrid;
+            if (seq == null || mainGrid == null)
+                return;
+
+            Vector3D center, tangent;
+            seq.PathAt(HyperdictionSequence.TOTAL_TICKS, out center, out tangent);
+
+            // Exit heading follows the end of the pull toward the Hyperdictor
+            MatrixD cleanRot = seq.BaseRotationFor(tangent);
+            JumpOrientation = cleanRot;
+            JumpDirection = tangent;
+            JumpDestination = seq.DropPos;
+            JumpDistance = Vector3D.Distance(mainGrid.PositionComp.GetPosition(), seq.DropPos);
+
+            // Settle the grid into a clean pose at the drop point so the portal geometry measures the true hull
+            MatrixD cleanPose = cleanRot;
+            cleanPose.Translation = center - Vector3D.TransformNormal(seq.LocalCenter, cleanRot);
+            SafeTeleportMainGrid(cleanPose);
+
+            Hyperdiction = null;
+            hyperdictionLeadFxSpawned = false;
+            hyperdictionAftermath = true;
+
+            if (hyperdictionSound != null && hyperdictionSound.IsPlaying)
+                hyperdictionSound.StopSound(false);
+
+            StartJumpOut();
+        }
+
+        private Vector3D GetListenerAnchor(Vector3D fallback)
+        {
+            return MyAPIGateway.Session?.Camera != null ? MyAPIGateway.Session.Camera.Position : fallback;
+        }
+
+        // Ticked instead of the normal transit logic while the Hyperdictor holds this ship (not while recovering)
+        private void UpdateHyperdictionTick(MyCubeGrid mainGrid)
+        {
+            var seq = Hyperdiction;
+            seq.ElapsedTicks++;
+            int tick = seq.ElapsedTicks;
+
+            Vector3D center;
+            MatrixD pose = seq.EvaluatePose(tick, out center);
+            SafeTeleportMainGrid(pose);
+
+            if (!MyAPIGateway.Utilities.IsDedicated)
+            {
+                if (hyperdictionSound != null && hyperdictionSound.IsPlaying)
+                {
+                    hyperdictionSound.SetPosition(GetListenerAnchor(center));
+                    hyperdictionSound.SetVelocity(Vector3.Zero);
+                }
+            }
+
+            UpdateTransitClientFX(seq.ShakeAt(tick), false);
+
+            if (tick >= HyperdictionSequence.TOTAL_TICKS)
+            {
+                if (IsAuthorityMachine)
+                    HyperdictionSession.Instance?.OnSequenceComplete(this);
+                else if (tick >= HyperdictionSequence.TOTAL_TICKS + 120)
+                    HyperdictionDrop(); // the Drop message never arrived; leave the tunnel anyway
+            }
+        }
+
+        // 5s power blackout + half-intensity tumble once the ship has emerged from the portal
+        private void ApplyHyperdictionAftermath()
+        {
+            var mainGrid = GridSystem?.mainGrid;
+            if (mainGrid == null)
+                return;
+
+            const double blackoutSeconds = 5.0;
+            long restoreTicks = DateTime.UtcNow.Ticks + TimeSpan.FromSeconds(blackoutSeconds).Ticks;
+
+            var grids = GridSystem.gridGroup;
+            foreach (var g in grids)
+            {
+                var mg = g as MyCubeGrid;
+                if (mg == null || mg.MarkedForClose) continue;
+                foreach (var block in mg.GetFatBlocks())
+                {
+                    var producer = block as IMyPowerProducer;
+                    if (producer != null && producer.IsFunctional && producer.Enabled)
+                    {
+                        producer.Enabled = false;
+                        blackoutProducers.Add(producer);
+                        HyperspaceSystem._globallyDisabledPower[producer] = restoreTicks;
+                    }
+                }
+            }
+            blackoutTicks = (int)(blackoutSeconds * 60.0);
+
+            if (mainGrid.Physics != null)
+            {
+                float spinPitch = MyUtils.GetRandomSign() * MyUtils.GetRandomFloat(2.5f, 5.0f) * 0.5f;
+                float spinYaw = MyUtils.GetRandomSign() * MyUtils.GetRandomFloat(2.5f, 5.0f) * 0.5f;
+                float spinRoll = MyUtils.GetRandomSign() * MyUtils.GetRandomFloat(3.5f, 6.0f) * 0.5f;
+                mainGrid.Physics.AngularVelocity = new Vector3(spinPitch, spinYaw, spinRoll);
+
+                Vector3D yeet = (mainGrid.WorldMatrix.Forward * 0.8)
+                    + (mainGrid.WorldMatrix.Right * MyUtils.GetRandomFloat(-0.6f, 0.6f))
+                    + (mainGrid.WorldMatrix.Up * MyUtils.GetRandomFloat(-0.6f, 0.6f));
+                yeet.Normalize();
+                mainGrid.Physics.LinearVelocity = (Vector3)(yeet * 50.0);
+            }
+        }
+
+        private void UpdateBlackout()
+        {
+            if (--blackoutTicks > 0)
+                return;
+
+            for (int i = 0; i < blackoutProducers.Count; i++)
+            {
+                var producer = blackoutProducers[i];
+                HyperspaceSystem._globallyDisabledPower.Remove(producer);
+                if (producer != null && !producer.Closed && producer.IsFunctional)
+                    producer.Enabled = true;
+            }
+            blackoutProducers.Clear();
+            blackoutTicks = 0;
+            SendNotification("POWER RESTORED", 3f, "White");
+        }
+
         private void UpdateTransitTick()
         {
             var mainGrid = GridSystem?.mainGrid;
             if (mainGrid == null) return;
+
+            // Held by a Hyperdictor: the deterministic 9s sequence replaces the normal transit logic
+            if (Hyperdiction != null && !Hyperdiction.IsRecovering)
+            {
+                UpdateHyperdictionTick(mainGrid);
+                return;
+            }
 
             // --- Power & FSD loss detection during transit (matches HyperspaceSystem.UpdateTransitTick) ---
             bool fsdIssue = HostDrive == null || HostDrive.block == null
@@ -956,6 +1223,18 @@ namespace WarpDriveMod
             Vector3D currentPos = JumpOrigin + (JumpDirection * (JumpDistance * t));
             MatrixD currentMatrix = JumpOrientation;
             currentMatrix.Translation = currentPos;
+
+            // Hyperdictor failed: the rotation offsets of the sequence settle back to neutral while the ship resumes transit
+            float shakeMagnitude = 1.0f;
+            if (Hyperdiction != null)
+            {
+                Hyperdiction.ElapsedTicks++;
+                currentMatrix = Hyperdiction.ApplyOffsets(currentMatrix, Hyperdiction.ElapsedTicks);
+                shakeMagnitude = Math.Max(shakeMagnitude, Hyperdiction.ShakeAt(Hyperdiction.ElapsedTicks));
+                if (Hyperdiction.RecoveryComplete)
+                    Hyperdiction = null;
+            }
+
             SafeTeleportMainGrid(currentMatrix);
 
             // Planetary gravity exclusion zone check every 10 ticks during transit
@@ -991,52 +1270,7 @@ namespace WarpDriveMod
             ClearPhysicsVelocities();
 
             // Client-side effects
-            if (!MyAPIGateway.Utilities.IsDedicated)
-            {
-                bool isLocalOnboard = IsLocalPlayerOnboard();
-
-                if (isLocalOnboard)
-                {
-                    HyperspaceSunManager.Instance.RequestSuppression(this, true);
-                    UpdateTransitTunnelFX();
-                    UpdateTransitSmoothReveal();
-                    DrawHyperspaceBackdrop();
-
-                    // Spectator check for grid visibility during transit
-                    var controller = MyAPIGateway.Session?.CameraController;
-                    bool isValidView = (controller is Sandbox.ModAPI.IMyCockpit) || (controller is VRage.Game.ModAPI.IMyCharacter) || (controller is Sandbox.ModAPI.Ingame.IMyCameraBlock);
-                    bool isSpectator = !isValidView;
-
-                    if (isSpectator && !_spectatorHidden)
-                    {
-                        _isTransitRevealActive = false;
-                        _transitRevealBlocks.Clear();
-                        HideAllBlocks(currentWipe);
-                        _spectatorHidden = true;
-                    }
-                    else if (!isSpectator && _spectatorHidden)
-                    {
-                        RestoreAllBlocksVisibility(true);
-                        _spectatorHidden = false;
-                    }
-
-                    // Cockpit camera shake during transit
-                    var activeCockpit = GridSystem?.FindMainCockpit() as Sandbox.Game.Entities.MyCockpit;
-                    if (activeCockpit != null)
-                        activeCockpit.AddShake(1.0f);
-                }
-                else
-                {
-                    HyperspaceSunManager.Instance.ReleaseSuppression(this, true);
-                    _isTransitRevealActive = false;
-                    _transitRevealBlocks.Clear();
-
-                    // Local player stepped off the ship during transit — stop tunnel FX immediately
-                    StopTransitParticles();
-                    if (transitSound != null && transitSound.IsPlaying)
-                        transitSound.StopSound(true);
-                }
-            }
+            UpdateTransitClientFX(shakeMagnitude, true);
 
             // Destination Broadcast 1: 11 seconds before arrival (2s duration incoming warning)
             float secondsRemaining = totalSeconds - elapsedSeconds;
@@ -1071,6 +1305,60 @@ namespace WarpDriveMod
             }
         }
 
+        // Client-side transit effects: sun suppression, tunnel, backdrop, spectator hiding and cockpit shake.
+        // Shared by the normal transit tick and the hyperdiction sequence so the tunnel never drops out while a ship is held.
+        private void UpdateTransitClientFX(float shakeMagnitude, bool playTransitLoop)
+        {
+            if (MyAPIGateway.Utilities.IsDedicated)
+                return;
+
+            bool isLocalOnboard = IsLocalPlayerOnboard();
+
+            if (isLocalOnboard)
+            {
+                HyperspaceSunManager.Instance.RequestSuppression(this, true);
+                UpdateTransitTunnelFX(playTransitLoop);
+                UpdateTransitSmoothReveal();
+                DrawHyperspaceBackdrop();
+
+                // Spectator check for grid visibility during transit
+                var controller = MyAPIGateway.Session?.CameraController;
+                bool isValidView = (controller is Sandbox.ModAPI.IMyCockpit) || (controller is VRage.Game.ModAPI.IMyCharacter) || (controller is Sandbox.ModAPI.Ingame.IMyCameraBlock);
+                bool isSpectator = !isValidView;
+
+                if (isSpectator && !_spectatorHidden)
+                {
+                    _isTransitRevealActive = false;
+                    _transitRevealBlocks.Clear();
+                    HideAllBlocks(currentWipe);
+                    _spectatorHidden = true;
+                }
+                else if (!isSpectator && _spectatorHidden)
+                {
+                    RestoreAllBlocksVisibility(true);
+                    _spectatorHidden = false;
+                }
+
+                // Cockpit camera shake during transit
+                var activeCockpit = GridSystem?.FindMainCockpit() as Sandbox.Game.Entities.MyCockpit;
+                if (activeCockpit != null)
+                    activeCockpit.AddShake(Hyperdiction == null ? ShakeShaper.Natural(shakeMagnitude, 0.7f) : shakeMagnitude);
+            }
+            else
+            {
+                HyperspaceSunManager.Instance.ReleaseSuppression(this, true);
+                _isTransitRevealActive = false;
+                _transitRevealBlocks.Clear();
+
+                // Local player stepped off the ship during transit — stop tunnel FX immediately
+                StopTransitParticles();
+                if (transitSound != null && transitSound.IsPlaying)
+                    transitSound.StopSound(true);
+                if (hyperdictionSound != null && hyperdictionSound.IsPlaying)
+                    hyperdictionSound.StopSound(true);
+            }
+        }
+
         private void PerformTransitObstacleCheck()
         {
             Vector3D safeDest;
@@ -1082,7 +1370,7 @@ namespace WarpDriveMod
             }
         }
 
-        private void StartJumpOut()
+        public void StartJumpOut()
         {
             HyperspaceSunManager.Instance.ReleaseSuppression(this, false);
             State = CapState.JumpOut;
@@ -1228,6 +1516,14 @@ namespace WarpDriveMod
             stateElapsedTicks = 0;
             stateTotalTicks = (long)(COOLDOWN_SECONDS * 60f);
 
+            if (hyperdictionAftermath)
+            {
+                hyperdictionAftermath = false;
+                ApplyHyperdictionAftermath();
+                SendNotification("FSD FAILURE - HYPERDICTION AFTERMATH - POWER LOST", 5f, "Red");
+                return;
+            }
+
             SendNotification("CAPITAL FSD JUMP COMPLETE - COOLDOWN ACTIVE", 4f, "White");
         }
 
@@ -1250,6 +1546,12 @@ namespace WarpDriveMod
 
             HyperspaceSunManager.Instance.ReleaseSuppression(this, true);
             State = CapState.Idle;
+
+            Hyperdiction = null;
+            hyperdictionAftermath = false;
+            if (hyperdictionSound != null && hyperdictionSound.IsPlaying)
+                hyperdictionSound.StopSound(true);
+
             SetPlayersSave(true);
             _playersInTransit.Clear();
             StopAllSounds();
@@ -1911,7 +2213,10 @@ namespace WarpDriveMod
 
             if (MyAPIGateway.Multiplayer.IsServer || MyAPIGateway.Utilities.IsDedicated)
             {
-                mainGrid.Teleport(targetMatrix);
+                if (Hyperdiction != null)
+                    HyperspaceSystem.TeleportWithRotation(mainGrid, targetMatrix);
+                else
+                    mainGrid.Teleport(targetMatrix);
             }
 
             ClearPhysicsVelocities();
@@ -2558,7 +2863,7 @@ namespace WarpDriveMod
             catch (Exception) { }
         }
 
-        private void UpdateTransitTunnelFX()
+        private void UpdateTransitTunnelFX(bool playTransitLoop = true)
         {
             if (MyAPIGateway.Utilities.IsDedicated || GridSystem?.mainGrid == null) return;
 
@@ -2610,7 +2915,7 @@ namespace WarpDriveMod
                     transitSound.SetPosition(soundAnchor);
                     transitSound.SetVelocity(Vector3.Zero);
 
-                    if (!transitSound.IsPlaying)
+                    if (playTransitLoop && !transitSound.IsPlaying)
                     {
                         transitSound.PlaySound(new MySoundPair("inHyperSpace"), true);
                     }

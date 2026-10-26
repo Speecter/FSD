@@ -160,10 +160,13 @@
         <SubtypeId>hyperdiction</SubtypeId>
       </Id>
       <Category>SHIP</Category>
-      <Volume>0.8</Volume>
-      <MaxDistance>500</MaxDistance>
+      <Volume>1.8</Volume>
+      <MaxDistance>10000</MaxDistance>
       <Loopable>false</Loopable>
       <Waves>
+        <Wave Type="D3">
+          <Start>Audio\SC\hyperdiction.wav</Start>
+        </Wave>
         <Wave Type="D2">
           <Start>Audio\SC\hyperdiction.wav</Start>
         </Wave>
@@ -349,6 +352,37 @@
         <Wave Type="D3">
           <Start>Audio\SC\FTL LowSpeed.wav</Start>
           <Loop>Audio\SC\FTL LowSpeed.wav</Loop>
+        </Wave>
+      </Waves>
+    </Sound>
+    <Sound>
+      <Id>
+        <TypeId>MyObjectBuilder_AudioDefinition</TypeId>
+        <SubtypeId>Hyperdictor_charge</SubtypeId>
+      </Id>
+      <Category>SHIP</Category>
+      <Volume>0.85</Volume>
+      <MaxDistance>500</MaxDistance>
+      <Loopable>true</Loopable>
+      <Waves>
+        <Wave Type="D3">
+          <Start>Audio\SC\FTL_Charge_Up_Loop.wav</Start>
+          <Loop>Audio\SC\FTL_Charge_Up_Loop.wav</Loop>
+        </Wave>
+      </Waves>
+    </Sound>
+    <Sound>
+      <Id>
+        <TypeId>MyObjectBuilder_AudioDefinition</TypeId>
+        <SubtypeId>Hyperdictor_engaged</SubtypeId>
+      </Id>
+      <Category>SHIP</Category>
+      <Volume>1.0</Volume>
+      <MaxDistance>1000</MaxDistance>
+      <Loopable>false</Loopable>
+      <Waves>
+        <Wave Type="D3">
+          <Start>Audio\SC\fsd_cap_engage.wav</Start>
         </Wave>
       </Waves>
     </Sound>

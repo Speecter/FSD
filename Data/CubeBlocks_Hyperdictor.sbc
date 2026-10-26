@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Definitions xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <CubeBlocks>
+    <Definition xsi:type="MyObjectBuilder_UpgradeModuleDefinition">
+      <Id>
+        <TypeId>UpgradeModule</TypeId>
+        <SubtypeId>HyperdictorLarge</SubtypeId>
+      </Id>
+      <DisplayName>Frame Shift Hyperdictor</DisplayName>
+      <Icon>Textures\GUI\Icons\Cubes\gravity_generator.dds</Icon>
+      <Description>Long-range Frame Shift interdiction device. Generates an intense 25km subspace distortion sphere capable of ripping vessels directly out of Hyperspace transit.
+Target: Hyperspace / Witchspace transit conduits only.
+Power Requirement: 20 MW
+Capacitor Charge Time: 45s
+Operational Radius: 25 km
+Balancing Restrictions:
+1. Ship must remain completely stationary while engaged.
+2. Enters a 10-minute thermal cooling mode after successfully catching a ship.</Description>
+      <CubeSize>Large</CubeSize>
+      <BlockTopology>TriangleMesh</BlockTopology>
+      <Size x="1" y="1" z="1" />
+      <ModelOffset x="0" y="0" z="0" />
+      <Model>Models\Cubes\Large\GravityGenerator.mwm</Model>
+      <Components>
+        <Component Subtype="SteelPlate" Count="150" />
+        <Component Subtype="GravityGenerator" Count="60" />
+        <Component Subtype="Superconductor" Count="800" />
+        <Component Subtype="PowerCell" Count="120" />
+        <Component Subtype="Detector" Count="40" />
+        <Component Subtype="Computer" Count="100" />
+        <Component Subtype="Construction" Count="50" />
+        <Component Subtype="SteelPlate" Count="50" />
+      </Components>
+      <CriticalComponent Subtype="Computer" Index="0" />
+      <MountPoints>
+        <MountPoint Side="Bottom" StartX="0" StartY="0" EndX="1" EndY="1" Default="true" />
+        <MountPoint Side="Top" StartX="0" StartY="0" EndX="1" EndY="1" />
+        <MountPoint Side="Left" StartX="0" StartY="0" EndX="1" EndY="1" />
+        <MountPoint Side="Right" StartX="0" StartY="0" EndX="1" EndY="1" />
+        <MountPoint Side="Back" StartX="0" StartY="0" EndX="1" EndY="1" />
+        <MountPoint Side="Front" StartX="0" StartY="0" EndX="1" EndY="1" />
+      </MountPoints>
+      <BuildProgressModels>
+        <Model BuildPercentUpperBound="0.33" File="Models\Cubes\Large\GravityGeneratorConstruction_1.mwm" />
+        <Model BuildPercentUpperBound="0.66" File="Models\Cubes\Large\GravityGeneratorConstruction_2.mwm" />
+        <Model BuildPercentUpperBound="1.00" File="Models\Cubes\Large\GravityGeneratorConstruction_3.mwm" />
+      </BuildProgressModels>
+      <BlockPairName>HyperdictorBlock</BlockPairName>
+      <MirroringY>Z</MirroringY>
+      <MirroringZ>Y</MirroringZ>
+      <EdgeType>Light</EdgeType>
+      <BuildTimeSeconds>45</BuildTimeSeconds>
+      <DamageEffectName>Damage_Electrical_Damaged</DamageEffectName>
+      <DamagedSound>ParticleElectrical</DamagedSound>
+      <ResourceSinkGroup>Utility</ResourceSinkGroup>
+      <RequiredPowerInput>20.0</RequiredPowerInput>
+      <PrimarySound>BlockAirVentIdle</PrimarySound>
+    </Definition>
+  </CubeBlocks>
+</Definitions>

@@ -18,7 +18,7 @@ using ProtoBuf;
 
 namespace WarpDriveMod
 {
-    public class HyperspaceSystem
+    public class HyperspaceSystem : IHyperdictionVictim
     {
         public enum HyperState
         {
@@ -237,12 +237,22 @@ namespace WarpDriveMod
         private MyEntity3DSoundEmitter jumpArrivalSound;
 
         // Emergency Drop fields
-        private static readonly Dictionary<IMyPowerProducer, long> _globallyDisabledPower = new Dictionary<IMyPowerProducer, long>();
+        internal static readonly Dictionary<IMyPowerProducer, long> _globallyDisabledPower = new Dictionary<IMyPowerProducer, long>();
         private readonly List<IMyPowerProducer> tempDisabledPower = new List<IMyPowerProducer>();
         private int emergencyPowerDisableTicks = 0;
         private int fsdLossTicks = 0;
         private int powerLossTicks = 0;
         private int controlLossTicks = 0;
+
+        // Hyperdiction: non-null while a Hyperdictor has pulled this ship into the 9s interdiction sequence
+        public HyperdictionSequence Hyperdiction { get; private set; }
+        public bool IsHyperdicted { get { return Hyperdiction != null; } }
+        private MyEntity3DSoundEmitter hyperdictionSound;
+        private bool hyperdictionLeadFxSpawned = false;
+        private MatrixD? lastHyperdictionPose;
+
+        public MyCubeGrid HyperdictionGrid { get { return GridSystem?.mainGrid; } }
+        public bool CanBeHyperdicted { get { return State == HyperState.Active && Hyperdiction == null && GridSystem?.mainGrid != null && !GridSystem.mainGrid.MarkedForClose; } }
 
         // Players in transit - Character.Save suppression (borrowed from WarpSystem)
         private readonly List<IMyPlayer> _playersInTransit = new List<IMyPlayer>();
@@ -1159,8 +1169,33 @@ namespace WarpDriveMod
             return false;
         }
 
+        // Checks if a physical human player is seated in a cockpit or actively remote-controlling this ship
+        public bool HasHumanPilot()
+        {
+            var grids = GridSystem?.gridGroup;
+            if (grids == null || grids.Count == 0) return false;
+
+            foreach (var igrid in grids)
+            {
+                var grid = igrid as MyCubeGrid;
+                if (grid == null) continue;
+                foreach (var block in grid.GetFatBlocks())
+                {
+                    var cockpit = block as IMyCockpit;
+                    if (cockpit != null && cockpit.Pilot != null)
+                        return true;
+
+                    var rc = block as IMyRemoteControl;
+                    if (rc != null && rc.IsUnderControl)
+                        return true;
+                }
+            }
+
+            return false;
+        }
+
         // Pre-Flight & Safety Checks
-        public bool CanInitiateJump(long playerId = 0L)
+        public bool CanInitiateJump(long playerId = 0L, bool checkAlignment = true)
         {
             var warpSys = HostDrive?.warpSystem;
             if (warpSys == null || GridSystem == null || GridSystem.mainGrid == null)
@@ -1299,7 +1334,7 @@ namespace WarpDriveMod
             }
 
             // 10. Alignment Check (GPS Mode only when coordinates are valid)
-            if (Mode == JumpMode.GpsWaypoint && SelectedGpsCoords.HasValue)
+            if (checkAlignment && Mode == JumpMode.GpsWaypoint && SelectedGpsCoords.HasValue)
             {
                 Vector3D targetDir = Vector3D.Normalize(targetCoord - shipPos);
                 double dot = MathHelper.Clamp(Vector3D.Dot(cockpit.WorldMatrix.Forward, targetDir), -1.0, 1.0);
@@ -1366,9 +1401,11 @@ namespace WarpDriveMod
             if (State != HyperState.Idle) return;
 
             var cockpit = GridSystem?.FindMainCockpit();
-            if (cockpit == null) return;
+            var mainGrid = GridSystem?.mainGrid;
+            if (mainGrid == null) return;
 
-            if (!CanInitiateJump(playerId)) return;
+            // Pre-flight check: allow entering fleet holding loop without requiring immediate heading alignment
+            if (!CanInitiateJump(playerId, false)) return;
 
             triggeringPlayerId = playerId;
             IsFleetHolding = true;
@@ -1386,23 +1423,38 @@ namespace WarpDriveMod
             checkedObstacle50 = false;
             checkedObstacle90 = false;
 
-            var mainGrid = GridSystem?.mainGrid;
+            MatrixD refMatrix = (cockpit != null) ? cockpit.WorldMatrix : mainGrid.WorldMatrix;
+            JumpOrigin = mainGrid.PositionComp.GetPosition();
             float powerMW = GetDrivePowerMW();
             Vector3D targetCoord;
             double totalDist;
-            if (TryGetTargetCoordinates(cockpit, powerMW, out targetCoord, out totalDist))
+            if (cockpit != null && TryGetTargetCoordinates(cockpit, powerMW, out targetCoord, out totalDist))
             {
-                JumpOrigin = mainGrid != null ? mainGrid.PositionComp.GetPosition() : cockpit.WorldMatrix.Translation;
                 JumpDistance = totalDist;
                 if (Mode == JumpMode.ManualDistance)
                 {
-                    JumpDirection = cockpit.WorldMatrix.Forward;
+                    JumpDirection = refMatrix.Forward;
                     JumpDestination = JumpOrigin + (JumpDirection * JumpDistance);
                 }
                 else
                 {
                     JumpDestination = targetCoord;
                     JumpDirection = Vector3D.Normalize(JumpDestination - JumpOrigin);
+                }
+            }
+            else
+            {
+                JumpDirection = refMatrix.Forward;
+                if (SelectedGpsCoords.HasValue)
+                {
+                    JumpDestination = SelectedGpsCoords.Value;
+                    JumpDirection = Vector3D.Normalize(JumpDestination - JumpOrigin);
+                    JumpDistance = Vector3D.Distance(JumpOrigin, JumpDestination);
+                }
+                else
+                {
+                    JumpDistance = GetCurrentManualDistance(powerMW);
+                    JumpDestination = JumpOrigin + (JumpDirection * JumpDistance);
                 }
             }
 
@@ -1423,10 +1475,11 @@ namespace WarpDriveMod
             IsFleetHolding = false;
             fleetStaggerTicks = staggerTicks;
             FleetSynchronizedJourneyDuration = syncJourneyDuration;
+            ResetFleetAutoSteerGyros();
 
             var cockpit = GridSystem?.FindMainCockpit();
             var mainGrid = GridSystem?.mainGrid;
-            if (cockpit == null || mainGrid == null) return;
+            if (mainGrid == null) return;
 
             FleetLeaderGridId = (leaderGridId != 0L) ? leaderGridId : (staggerTicks == 0 ? mainGrid.EntityId : 0L);
 
@@ -1443,7 +1496,7 @@ namespace WarpDriveMod
                 float powerMW = GetDrivePowerMW();
                 Vector3D targetCoord;
                 double totalDist;
-                if (TryGetTargetCoordinates(cockpit, powerMW, out targetCoord, out totalDist))
+                if (cockpit != null && TryGetTargetCoordinates(cockpit, powerMW, out targetCoord, out totalDist))
                 {
                     JumpDistance = totalDist;
                 }
@@ -1618,7 +1671,7 @@ namespace WarpDriveMod
                 AbortJump("POWER FAILURE - CHARGING ABORTED");
                 return;
             }
-            if (!HasSeatedPilot())
+            if (!IsIntercepting && !HasSeatedPilot())
             {
                 AbortJump("JUMP ABORTED - CONTROL LOST");
                 return;
@@ -1677,6 +1730,15 @@ namespace WarpDriveMod
 
             chargeElapsedTicks++;
 
+            if (IsIntercepting)
+                UpdateInterceptSteering();
+
+            // Auto-steer unmanned drones while holding in fleet formation
+            if (IsFleetHolding)
+            {
+                UpdateFleetDroneAutoSteer();
+            }
+
             // Check if 10-second charge completed
             if (chargeElapsedTicks >= chargeTotalTicks)
             {
@@ -1684,34 +1746,36 @@ namespace WarpDriveMod
                 {
                     // Check alignment with fleet target direction
                     var curCockpit = GridSystem.FindMainCockpit();
-                    if (curCockpit != null)
+                    MatrixD refMatrix = (curCockpit != null) ? curCockpit.WorldMatrix : mainGrid.WorldMatrix;
+
+                    Vector3D targetDir;
+                    if (JumpOrientation != default(MatrixD))
                     {
-                        Vector3D targetDir;
-                        if (JumpOrientation != default(MatrixD))
+                        targetDir = JumpDirection.LengthSquared() > 0.001 ? JumpDirection : JumpOrientation.Forward;
+                    }
+                    else
+                    {
+                        var lobby = FleetJumpSystem.GetLobbyForGrid(mainGrid.EntityId);
+                        if (lobby != null)
                         {
-                            targetDir = JumpDirection.LengthSquared() > 0.001 ? JumpDirection : JumpOrientation.Forward;
+                            targetDir = (lobby.Mode == JumpMode.GpsWaypoint && lobby.TargetGpsCoords.HasValue)
+                                ? Vector3D.Normalize(lobby.TargetGpsCoords.Value - refMatrix.Translation)
+                                : lobby.DepartureOrientation.Forward;
                         }
                         else
                         {
-                            var lobby = FleetJumpSystem.GetLobbyForGrid(mainGrid.EntityId);
-                            if (lobby != null)
-                            {
-                                targetDir = (lobby.Mode == JumpMode.GpsWaypoint && lobby.TargetGpsCoords.HasValue)
-                                    ? Vector3D.Normalize(lobby.TargetGpsCoords.Value - curCockpit.WorldMatrix.Translation)
-                                    : lobby.DepartureOrientation.Forward;
-                            }
-                            else
-                            {
-                                targetDir = JumpDirection.LengthSquared() > 0.001 
-                                    ? JumpDirection 
-                                    : (JumpDestination != Vector3D.Zero ? Vector3D.Normalize(JumpDestination - curCockpit.WorldMatrix.Translation) : curCockpit.WorldMatrix.Forward);
-                            }
+                            targetDir = JumpDirection.LengthSquared() > 0.001 
+                                ? JumpDirection 
+                                : (JumpDestination != Vector3D.Zero ? Vector3D.Normalize(JumpDestination - refMatrix.Translation) : refMatrix.Forward);
                         }
+                    }
 
-                        double dot = MathHelper.Clamp(Vector3D.Dot(curCockpit.WorldMatrix.Forward, targetDir), -1.0, 1.0);
-                        double angleDeg = MathHelper.ToDegrees(Math.Acos(dot));
+                    double dot = MathHelper.Clamp(Vector3D.Dot(refMatrix.Forward, targetDir), -1.0, 1.0);
+                    double angleDeg = MathHelper.ToDegrees(Math.Acos(dot));
 
-                        if (chargeElapsedTicks % 60 == 0)
+                    if (chargeElapsedTicks % 60 == 0)
+                    {
+                        if (HasHumanPilot())
                         {
                             if (angleDeg > ALIGNMENT_TOLERANCE_DEG)
                                 warpSys.SendMessage($"ALIGN TO FLEET VECTOR | OFFSET: {angleDeg:F1}° (Max {ALIGNMENT_TOLERANCE_DEG:F1}°)", 1f, "Red", triggeringPlayerId);
@@ -1783,7 +1847,7 @@ namespace WarpDriveMod
                 AbortJump("CHARGE COLLAPSED - HAZARD DETECTED");
                 return;
             }
-            if (!HasSeatedPilot())
+            if (!IsIntercepting && !HasSeatedPilot())
             {
                 AbortJump("JUMP ABORTED - CONTROL LOST");
                 return;
@@ -1822,6 +1886,9 @@ namespace WarpDriveMod
                 AbortJump("COCKPIT LOST");
                 return;
             }
+
+            if (IsIntercepting)
+                UpdateInterceptSteering();
 
             bool isFleet = (mainGrid != null && FleetJumpSystem.IsGridInFleet(mainGrid.EntityId)) || fleetStaggerTicks > 0 || FleetLeaderGridId != 0L;
             Vector3D targetDir = (isFleet && JumpOrientation != default(MatrixD))
@@ -1877,7 +1944,7 @@ namespace WarpDriveMod
                 AbortJump("JUMP ABORTED - HAZARD DETECTED");
                 return;
             }
-            if (!HasSeatedPilot())
+            if (!IsIntercepting && !HasSeatedPilot())
             {
                 AbortJump("JUMP ABORTED - CONTROL LOST");
                 return;
@@ -1995,6 +2062,8 @@ namespace WarpDriveMod
         // Aborts charging, holding, or countdown and spools down the drive
         public void AbortJump(string reason = "FSD JUMP ABORTED")
         {
+            Hyperdiction = null;
+            EndIntercept();
             var mainGrid = GridSystem?.mainGrid;
             long gridId = mainGrid?.EntityId ?? 0L;
 
@@ -2012,6 +2081,7 @@ namespace WarpDriveMod
             FleetSynchronizedJourneyDuration = 0f;
             FleetLeaderGridId = 0L;
             _triggeredArrivalLeadFX = false;
+            ResetFleetAutoSteerGyros();
 
             if (mainGrid != null)
             {
@@ -2142,8 +2212,498 @@ namespace WarpDriveMod
             }
         }
 
+        private static readonly List<IMyCubeGrid> _poseGroupScratch = new List<IMyCubeGrid>();
+        private static readonly List<KeyValuePair<MyCubeGrid, MatrixD>> _poseTargetsScratch = new List<KeyValuePair<MyCubeGrid, MatrixD>>();
+
+        /// <summary>
+        /// Moves the grid and everything physically attached to it to the given pose, rotation included.
+        /// MyCubeGrid.Teleport only applies the translation of the matrix it is given and ignores its orientation,
+        /// so the orientation is applied afterwards to each grid of the group, keeping their relative placement.
+        /// </summary>
+        public static void TeleportWithRotation(MyCubeGrid mainGrid, MatrixD pose)
+        {
+            MatrixD before = mainGrid.WorldMatrix;
+
+            _poseGroupScratch.Clear();
+            _poseTargetsScratch.Clear();
+            MyAPIGateway.GridGroups.GetGroup(mainGrid, GridLinkTypeEnum.Physical, _poseGroupScratch);
+            if (!_poseGroupScratch.Contains(mainGrid))
+                _poseGroupScratch.Add(mainGrid);
+
+            MatrixD inverse = MatrixD.Invert(before);
+            for (int i = 0; i < _poseGroupScratch.Count; i++)
+            {
+                var g = _poseGroupScratch[i] as MyCubeGrid;
+                if (g == null || g.MarkedForClose) continue;
+                _poseTargetsScratch.Add(new KeyValuePair<MyCubeGrid, MatrixD>(g, g.WorldMatrix * inverse * pose));
+            }
+
+            mainGrid.Teleport(pose);
+
+            for (int i = 0; i < _poseTargetsScratch.Count; i++)
+            {
+                var g = _poseTargetsScratch[i].Key;
+                if (g.MarkedForClose) continue;
+                g.WorldMatrix = _poseTargetsScratch[i].Value;
+            }
+
+            _poseGroupScratch.Clear();
+            _poseTargetsScratch.Clear();
+        }
+
+        // ------------------------------------------------------------------ Interception (this ship carries the Hyperdictor)
+
+        private const double INTERCEPT_TURN_RATE_LARGE = 0.25; // rad/s
+        private const double INTERCEPT_TURN_RATE_SMALL = 0.60; // rad/s
+
+        /// <summary>True from the moment a Hyperdictor ordered this ship to chase a victim until the chase jump ends.</summary>
+        public bool IsIntercepting { get; private set; }
+
+        private const double INTERCEPT_MAX_BANK = 0.20;           // rad, lean into the turn
+        private Vector3D interceptOmega;
+        private double interceptBank;
+
+        private JumpMode preInterceptMode;
+        private Vector3D? preInterceptGpsCoords;
+        private string preInterceptGpsName;
+
+        public double InterceptTurnRate
+        {
+            get { return GridSystem?.mainGrid?.GridSizeEnum == MyCubeSize.Large ? INTERCEPT_TURN_RATE_LARGE : INTERCEPT_TURN_RATE_SMALL; }
+        }
+
+        /// <summary>Longest jump this ship's FSD can make with the power it has right now.</summary>
+        public double MaxInterceptRange { get { return GetMaxJumpDistance(GetDrivePowerMW()); } }
+
+        /// <summary>Same hardware checks as a normal jump (health, power, not static, not in gravity) minus pilot and destination.</summary>
+        public bool IsInterceptReady(out string reason)
+        {
+            reason = null;
+            var warpSys = HostDrive?.warpSystem;
+            var mainGrid = GridSystem?.mainGrid;
+            if (HostDrive == null || warpSys == null || mainGrid == null || mainGrid.MarkedForClose) { reason = "NO FSD"; return false; }
+            if (!HostDrive.supportsHyperspace) { reason = "FSD HAS NO HYPERSPACE"; return false; }
+            if (State != HyperState.Idle) { reason = "FSD BUSY"; return false; }
+            if (warpSys.warpState != WarpSystem.State.idle) { reason = "FSD IN SUPERCRUISE"; return false; }
+            if (!HostDrive.block.IsFunctional || !HostDrive.block.IsWorking) { reason = "FSD DAMAGED OR OFF"; return false; }
+            if (!HostDrive.hasPower) { reason = "FSD LACKS POWER"; return false; }
+            if (GridSystem.isStatic || warpSys.ConnectedStatic(mainGrid)) { reason = "SHIP IS STATIC"; return false; }
+            if (warpSys.IsInGravity()) { reason = "IN GRAVITY WELL"; return false; }
+            if (GridSystem.FindMainCockpit() == null) { reason = "NO CONTROL SEAT"; return false; }
+            return true;
+        }
+
+        /// <summary>Seconds this ship needs to swing its nose onto the given direction.</summary>
+        public double EstimateAlignSeconds(Vector3D targetDir)
+        {
+            var mainGrid = GridSystem?.mainGrid;
+            if (mainGrid == null || targetDir.LengthSquared() < 1e-6)
+                return 0.0;
+
+            var cockpit = GridSystem.FindMainCockpit();
+            Vector3D fwd = cockpit != null ? (Vector3D)cockpit.WorldMatrix.Forward : (Vector3D)mainGrid.WorldMatrix.Forward;
+            double angle = Math.Acos(MathHelper.Clamp(Vector3D.Dot(fwd, Vector3D.Normalize(targetDir)), -1.0, 1.0));
+            return angle / InterceptTurnRate;
+        }
+
+        /// <summary>
+        /// A Hyperdictor ordered this ship to jump to the given point (behind its victim). Uses the ordinary FSD
+        /// charge (10s) and countdown (5s); the ship turns itself onto the jump vector, no pilot required.
+        /// </summary>
+        public bool StartIntercept(Vector3D destination, float journeySeconds)
+        {
+            string reason;
+            var mainGrid = GridSystem?.mainGrid;
+            if (!IsInterceptReady(out reason) || mainGrid == null)
+                return false;
+
+            Vector3D origin = mainGrid.PositionComp.GetPosition();
+            Vector3D toDest = destination - origin;
+            double dist = toDest.Length();
+            if (dist < 1000.0)
+                return false;
+
+            preInterceptMode = Mode;
+            preInterceptGpsCoords = SelectedGpsCoords;
+            preInterceptGpsName = SelectedGpsName;
+
+            Mode = JumpMode.GpsWaypoint;
+            SelectedGpsCoords = destination;
+            SelectedGpsName = "INTERCEPT";
+
+            interceptOmega = Vector3D.Zero;
+            interceptBank = 0.0;
+            triggeringPlayerId = 0L;
+            cooldownElapsedTicks = 0;
+            chargeElapsedTicks = 0;
+            holdElapsedTicks = 0;
+            countdownElapsedTicks = 0;
+            transitElapsedTicks = 0;
+            fsdLossTicks = 0;
+            powerLossTicks = 0;
+            controlLossTicks = 0;
+            _triggeredArrivalLeadFX = false;
+            checkedObstacle25 = false;
+            checkedObstacle50 = false;
+            checkedObstacle90 = false;
+
+            JumpOrigin = origin;
+            JumpDestination = destination;
+            JumpDirection = toDest / dist;
+            JumpDistance = dist;
+            JumpOrientation = default(MatrixD);
+            FleetSynchronizedJourneyDuration = Math.Max(journeySeconds, MIN_JOURNEY_SECONDS);
+
+            IsIntercepting = true;
+            State = HyperState.Charging;
+
+            if (!MyAPIGateway.Utilities.IsDedicated)
+                PlaySound(WarpSound.fsdHyperCharge);
+
+            HostDrive.warpSystem.SendMessage("INCOMING SHIP - ALIGNING TO INTERCEPT VECTOR", 4f, "White", 0L);
+            return true;
+        }
+
+        /// <summary>Stops a chase that has not entered hyperspace yet. A ship already in the tunnel simply finishes its jump.</summary>
+        public void CancelIntercept()
+        {
+            if (!IsIntercepting)
+                return;
+
+            if (State == HyperState.Charging || State == HyperState.HoldingCharge || State == HyperState.Countdown)
+                AbortJump("HYPERDICTOR INTERCEPT CANCELLED");
+        }
+
+        private void EndIntercept()
+        {
+            if (!IsIntercepting)
+                return;
+
+            IsIntercepting = false;
+            Mode = preInterceptMode;
+            SelectedGpsCoords = preInterceptGpsCoords;
+            SelectedGpsName = preInterceptGpsName;
+        }
+
+        // Swings the whole grid onto JumpDirection at the ship's turn rate (the server moves it, clients see it replicate)
+        private void UpdateInterceptSteering()
+        {
+            var mainGrid = GridSystem?.mainGrid;
+            if (mainGrid == null || !IsAuthorityMachine || JumpDirection.LengthSquared() < 0.001)
+                return;
+
+            var cockpit = GridSystem.FindMainCockpit();
+            Vector3D fwd = cockpit != null ? (Vector3D)cockpit.WorldMatrix.Forward : (Vector3D)mainGrid.WorldMatrix.Forward;
+            Vector3D target = Vector3D.Normalize(JumpDirection);
+
+            double angle = Math.Acos(MathHelper.Clamp(Vector3D.Dot(fwd, target), -1.0, 1.0));
+            double dt = 1.0 / 60.0;
+            double maxRate = InterceptTurnRate;
+
+            Vector3D axis = Vector3D.Cross(fwd, target);
+            if (axis.LengthSquared() < 1e-12)
+                axis = mainGrid.WorldMatrix.Up; // pointing exactly away: any perpendicular axis works
+            else
+                axis = Vector3D.Normalize(axis);
+
+            // Behave like a pilot easing the mouse: the wanted turn rate is proportional to the remaining angle (capped),
+            // and the actual angular velocity is low-pass filtered, so it ramps up and settles with no chatter
+            double desiredSpeed = angle < 0.0004 ? 0.0 : Math.Min(maxRate, angle * 0.7);
+            Vector3D desiredOmega = axis * desiredSpeed;
+            interceptOmega += (desiredOmega - interceptOmega) * (1.0 - Math.Exp(-dt / 0.55));
+
+            double speed = interceptOmega.Length();
+            double step = speed * dt;
+
+            // Lean into the turn: bank follows the smoothed yaw rate continuously (no sign flips), then levels out
+            double bankTarget = -Vector3D.Dot(interceptOmega, mainGrid.WorldMatrix.Up) / Math.Max(maxRate, 1e-6) * INTERCEPT_MAX_BANK;
+            double newBank = interceptBank + (bankTarget - interceptBank) * (1.0 - Math.Exp(-dt / 0.7));
+            double dBank = newBank - interceptBank;
+            interceptBank = newBank;
+
+            if (step < 1e-7 && Math.Abs(dBank) < 1e-6)
+                return;
+
+            MatrixD rot = step > 1e-9 ? MatrixD.CreateFromAxisAngle(interceptOmega / speed, step) : MatrixD.Identity;
+            rot = rot * MatrixD.CreateFromAxisAngle(fwd, dBank);
+            MatrixD current = mainGrid.WorldMatrix;
+            Vector3D center = mainGrid.PositionComp.WorldAABB.Center;
+
+            MatrixD next = current.GetOrientation() * rot;
+            next.Translation = center + Vector3D.TransformNormal(current.Translation - center, rot);
+            TeleportWithRotation(mainGrid, next);
+
+            if (mainGrid.Physics != null)
+                mainGrid.Physics.AngularVelocity = Vector3.Zero;
+        }
+
+        // ------------------------------------------------------------------ Hyperdiction (this ship is the victim)
+
+        /// <summary>Worth watching: jumping, or about to (a Hyperdictor may start its own charge from this).</summary>
+        public bool IsTrackable
+        {
+            get
+            {
+                if (GridSystem?.mainGrid == null || GridSystem.mainGrid.MarkedForClose || Hyperdiction != null || IsIntercepting)
+                    return false;
+                return State == HyperState.Active || State == HyperState.Charging || State == HyperState.HoldingCharge || State == HyperState.Countdown;
+            }
+        }
+
+        /// <summary>
+        /// The straight line this ship is going to fly and how long it takes. Available while in the tunnel, and beforehand
+        /// while charging/counting down toward a fixed GPS target, so a Hyperdictor ship can start its own 15s spool-up early.
+        /// </summary>
+        public bool TryGetTransitPlan(out HyperdictionTransitPlan plan)
+        {
+            plan = null;
+            if (!IsTrackable || JumpDirection.LengthSquared() < 0.001)
+                return false;
+
+            if (State == HyperState.Active)
+            {
+                if (transitTotalTicks <= 0)
+                    return false;
+
+                plan = new HyperdictionTransitPlan
+                {
+                    Origin = JumpOrigin,
+                    Direction = Vector3D.Normalize(JumpDirection),
+                    Distance = JumpDistance,
+                    ElapsedSeconds = transitElapsedTicks / 60.0,
+                    TotalSeconds = transitTotalTicks / 60.0,
+                    AccelSeconds = TRANSIT_ACCEL_SECONDS,
+                    DecelSeconds = TRANSIT_DECEL_SECONDS,
+                    InTransit = true
+                };
+                return true;
+            }
+
+            // Manual-distance jumps follow the pilot's nose until the very end, so only a GPS target is predictable
+            if (Mode != JumpMode.GpsWaypoint || JumpDistance < 1000.0)
+                return false;
+            if (State != HyperState.Charging && State != HyperState.Countdown)
+                return false;
+
+            double journey = FleetSynchronizedJourneyDuration > 0f
+                ? FleetSynchronizedJourneyDuration
+                : CalculateJourneyTime(JumpDistance, GetMaxJumpDistance(GetDrivePowerMW()));
+            double until = State == HyperState.Charging
+                ? (chargeTotalTicks - chargeElapsedTicks + countdownTotalTicks) / 60.0
+                : (countdownTotalTicks - countdownElapsedTicks) / 60.0;
+
+            plan = new HyperdictionTransitPlan
+            {
+                Origin = JumpOrigin,
+                Direction = Vector3D.Normalize(JumpDirection),
+                Distance = JumpDistance,
+                ElapsedSeconds = 0.0,
+                TotalSeconds = journey,
+                AccelSeconds = TRANSIT_ACCEL_SECONDS,
+                DecelSeconds = TRANSIT_DECEL_SECONDS,
+                InTransit = false,
+                TimeUntilEntrySeconds = Math.Max(0.0, until)
+            };
+            return true;
+        }
+
+        private static bool IsAuthorityMachine { get { return MyAPIGateway.Multiplayer.IsServer || MyAPIGateway.Utilities.IsDedicated; } }
+
+        /// <summary>
+        /// A Hyperdictor caught this ship. Starts the deterministic 9s sequence (runs on the server and on every client).
+        /// </summary>
+        public bool BeginHyperdiction(long hyperdictorBlockId, int seed, Vector3D dropPos)
+        {
+            var mainGrid = GridSystem?.mainGrid;
+            if (!CanBeHyperdicted || mainGrid == null)
+                return false;
+
+            Vector3D localCenter = mainGrid.PositionComp.LocalAABB.Center;
+            Vector3D catchCenter = Vector3D.Transform(localCenter, mainGrid.WorldMatrix);
+
+            Hyperdiction = new HyperdictionSequence(mainGrid.EntityId, hyperdictorBlockId, seed, false,
+                catchCenter, dropPos, JumpOrientation, JumpDirection, localCenter);
+            hyperdictionLeadFxSpawned = false;
+            lastHyperdictionPose = null;
+
+            if (!MyAPIGateway.Utilities.IsDedicated)
+            {
+                if (transitSound != null && transitSound.IsPlaying)
+                    transitSound.StopSound(true);
+
+                if (IsLocalPlayerOnboard())
+                {
+                    if (hyperdictionSound == null)
+                        hyperdictionSound = new MyEntity3DSoundEmitter(null) { CanPlayLoopSounds = false };
+
+                    hyperdictionSound.SetPosition(GetListenerAnchor(catchCenter));
+                    hyperdictionSound.SetVelocity(Vector3.Zero);
+                    hyperdictionSound.PlaySound(WarpSound.hyperdiction, true);
+                }
+            }
+
+            SendMessage("FRAME SHIFT ANOMALY - HYPERDICTION DETECTED", 6f, "Red", triggeringPlayerId);
+            return true;
+        }
+
+        /// <summary>
+        /// The Hyperdictor failed mid-sequence: aim a fresh transit leg from the current position to the original destination
+        /// and let the sequence's rotation offsets settle back to neutral over 2 seconds.
+        /// </summary>
+        public void AbortHyperdiction()
+        {
+            var seq = Hyperdiction;
+            var mainGrid = GridSystem?.mainGrid;
+            if (seq == null || seq.IsRecovering || mainGrid == null)
+                return;
+
+            long remainingTicks = Math.Max(0L, transitTotalTicks - transitElapsedTicks);
+
+            Vector3D currentPos = mainGrid.PositionComp.GetPosition();
+            Vector3D toDest = JumpDestination - currentPos;
+            double dist = toDest.Length();
+
+            if (dist > 1.0)
+            {
+                Vector3D newDir = toDest / dist;
+                Vector3D oldDir = JumpDirection;
+
+                // Re-aim the locked orientation along with the new heading
+                Vector3D axis = Vector3D.Cross(oldDir, newDir);
+                double axisLen = axis.Length();
+                if (axisLen > 1e-6)
+                {
+                    MatrixD aimed = JumpOrientation * MatrixD.CreateFromAxisAngle(axis / axisLen, Math.Atan2(axisLen, Vector3D.Dot(oldDir, newDir)));
+                    aimed.Translation = Vector3D.Zero;
+                    JumpOrientation = aimed;
+                }
+
+                JumpOrigin = currentPos;
+                JumpDirection = newDir;
+                JumpDistance = dist;
+            }
+
+            transitElapsedTicks = 0;
+            transitTotalTicks = Math.Max(remainingTicks, 180L);
+            checkedObstacle25 = false;
+            checkedObstacle50 = false;
+            checkedObstacle90 = false;
+            _triggeredArrivalLeadFX = false;
+
+            seq.RecoverStartTick = seq.ElapsedTicks;
+
+            if (hyperdictionSound != null && hyperdictionSound.IsPlaying)
+                hyperdictionSound.StopSound(false);
+
+            SendMessage("HYPERDICTION FIELD COLLAPSED - RESUMING TRANSIT", 4f, "White", triggeringPlayerId);
+        }
+
+        /// <summary>The 9s sequence ended: kick the ship into realspace next to the Hyperdictor.</summary>
+        public void HyperdictionDrop()
+        {
+            if (Hyperdiction == null)
+                return;
+
+            EmergencyDrop("FSD FAILURE - HYPERDICTION CONDUIT COLLAPSE", 6.0);
+        }
+
+        private Vector3D GetListenerAnchor(Vector3D fallback)
+        {
+            return MyAPIGateway.Session?.Camera != null ? MyAPIGateway.Session.Camera.Position : fallback;
+        }
+
+        private void ZeroTransitVelocities(MyCubeGrid mainGrid)
+        {
+            var connectedGrids = GridSystem?.gridGroup;
+            if (connectedGrids != null)
+            {
+                foreach (var g in connectedGrids)
+                {
+                    if (g?.Physics != null)
+                    {
+                        g.Physics.LinearVelocity = Vector3.Zero;
+                        g.Physics.AngularVelocity = Vector3.Zero;
+                    }
+                }
+            }
+            else if (mainGrid.Physics != null)
+            {
+                mainGrid.Physics.LinearVelocity = Vector3.Zero;
+                mainGrid.Physics.AngularVelocity = Vector3.Zero;
+            }
+        }
+
+        // Ticked instead of the normal transit logic while the Hyperdictor holds this ship (not while recovering)
+        private void UpdateHyperdictionTick(MyCubeGrid mainGrid)
+        {
+            var seq = Hyperdiction;
+            seq.ElapsedTicks++;
+            int tick = seq.ElapsedTicks;
+
+            Vector3D center;
+            MatrixD pose = seq.EvaluatePose(tick, out center);
+
+            // Diagnostic: the grid as it stands now (before this tick's Teleport) against the pose commanded last tick.
+            // Error near 0 = the rotation sticks; error near the commanded offset = something undoes it.
+            if (tick % 15 == 0 && IsAuthorityMachine && lastHyperdictionPose.HasValue)
+            {
+                MatrixD last = lastHyperdictionPose.Value;
+                MatrixD actual = mainGrid.WorldMatrix;
+                double fwdErr = MathHelper.ToDegrees(Math.Acos(MathHelper.Clamp(Vector3D.Dot(actual.Forward, last.Forward), -1.0, 1.0)));
+                double upErr = MathHelper.ToDegrees(Math.Acos(MathHelper.Clamp(Vector3D.Dot(actual.Up, last.Up), -1.0, 1.0)));
+                double cmdTilt = MathHelper.ToDegrees(Math.Acos(MathHelper.Clamp(Vector3D.Dot(last.Forward, seq.CatchDirection), -1.0, 1.0)));
+                double cmdRoll = MathHelper.ToDegrees(Math.Acos(MathHelper.Clamp(Vector3D.Dot(last.Up, seq.CatchOrientation.Up), -1.0, 1.0)));
+                MyLog.Default.WriteLine(string.Format("[Hyperdiction] tick {0}: commanded heading offset {1:F1} deg, up offset {2:F1} deg; grid error vs last command: forward {3:F2} deg, up {4:F2} deg, position {5:F1} m",
+                    tick, cmdTilt, cmdRoll, fwdErr, upErr, Vector3D.Distance(actual.Translation, last.Translation)));
+            }
+
+            if (IsAuthorityMachine)
+            {
+                TeleportWithRotation(mainGrid, pose);
+                lastHyperdictionPose = pose;
+            }
+
+            ZeroTransitVelocities(mainGrid);
+
+            if (!MyAPIGateway.Utilities.IsDedicated)
+            {
+                if (hyperdictionSound != null && hyperdictionSound.IsPlaying)
+                {
+                    hyperdictionSound.SetPosition(GetListenerAnchor(center));
+                    hyperdictionSound.SetVelocity(Vector3.Zero);
+                }
+
+                // Half a second before the drop, open the exit flash at the drop point
+                if (!hyperdictionLeadFxSpawned && tick >= HyperdictionSequence.TOTAL_TICKS - 30)
+                {
+                    hyperdictionLeadFxSpawned = true;
+                    if (MyAPIGateway.Session?.Camera != null && Vector3D.DistanceSquared(seq.DropPos, MyAPIGateway.Session.Camera.Position) < 50000.0 * 50000.0)
+                    {
+                        var iGrid = mainGrid as IMyCubeGrid;
+                        float gridWidth = iGrid.LocalAABB.Width > iGrid.LocalAABB.Height ? iGrid.LocalAABB.Width : iGrid.LocalAABB.Height;
+                        float scale = (mainGrid.GridSizeEnum == MyCubeSize.Large)
+                            ? MathHelper.Clamp(gridWidth / 15f, 1.5f, 5.0f)
+                            : MathHelper.Clamp(gridWidth / 8f, 0.8f, 2.5f);
+                        SpawnGlobalArrivalLeadFX(seq.DropPos, seq.CatchDirection, scale, 20000f, IsPrototechDrive);
+                    }
+                }
+            }
+
+            UpdateTransitClientFX(center, seq.ShakeAt(tick), false);
+
+            if (tick >= HyperdictionSequence.TOTAL_TICKS)
+            {
+                if (IsAuthorityMachine)
+                    HyperdictionSession.Instance?.OnSequenceComplete(this);
+                else if (tick >= HyperdictionSequence.TOTAL_TICKS + 120)
+                    HyperdictionDrop(); // the Drop message never arrived; leave the tunnel anyway
+            }
+        }
+
+
+
         // Emergency drop out of Hyperspace transit when power or FSD drive is cut
-        public void EmergencyDrop(string reason = "EMERGENCY DROP - CONDUIT COLLAPSED")
+        public void EmergencyDrop(string reason = "EMERGENCY DROP - CONDUIT COLLAPSED", double blackoutSeconds = 5.0)
         {
             HyperspaceSunManager.Instance.ReleaseSuppression(this, true);
             var mainGrid = GridSystem?.mainGrid;
@@ -2166,6 +2726,12 @@ namespace WarpDriveMod
             checkedObstacle50 = false;
             checkedObstacle90 = false;
 
+            EndIntercept();
+            Hyperdiction = null;
+            hyperdictionLeadFxSpawned = false;
+            if (hyperdictionSound != null && hyperdictionSound.IsPlaying)
+                hyperdictionSound.StopSound(false);
+
             UnregisterClaim(mainGrid.EntityId);
             FleetJumpSystem.UnregisterFleetGrid(mainGrid.EntityId);
             FleetLeaderGridId = 0L;
@@ -2182,12 +2748,13 @@ namespace WarpDriveMod
 
             if (!MyAPIGateway.Utilities.IsDedicated)
             {
-                SpawnJumpArrivalFX();
+                // Spawn the exit flash where the ship actually is, not at the (unreached) jump destination
+                SpawnJumpArrivalFX(mainGrid.PositionComp.WorldAABB.Center);
                 PlaySound(WarpSound.emergencyDropSound);
             }
 
-            // 2. Forcibly disable all power producers on the ship for 5 seconds
-            long restoreTimeTicks = DateTime.UtcNow.Ticks + TimeSpan.FromSeconds(5).Ticks;
+            // 2. Forcibly disable all power producers on the ship (5s for ordinary emergency drops, 6s after a hyperdiction)
+            long restoreTimeTicks = DateTime.UtcNow.Ticks + TimeSpan.FromSeconds(blackoutSeconds).Ticks;
             var grids = GridSystem?.gridGroup;
             if (grids != null && grids.Count > 0)
             {
@@ -2221,7 +2788,7 @@ namespace WarpDriveMod
                     }
                 }
             }
-            emergencyPowerDisableTicks = 5 * 60; // 5 seconds (300 ticks)
+            emergencyPowerDisableTicks = (int)(blackoutSeconds * 60.0);
 
             // Guarantee 500m clearance above ground on emergency drop
             if (mainGrid != null && (MyAPIGateway.Multiplayer.IsServer || MyAPIGateway.Utilities.IsDedicated))
@@ -2400,6 +2967,13 @@ namespace WarpDriveMod
             var mainGrid = GridSystem?.mainGrid;
             if (mainGrid == null || State != HyperState.Active) return;
 
+            // Held by a Hyperdictor: the deterministic 9s sequence replaces the normal transit logic
+            if (Hyperdiction != null && !Hyperdiction.IsRecovering)
+            {
+                UpdateHyperdictionTick(mainGrid);
+                return;
+            }
+
             // --- Power & FSD loss detection with debounced grace period ---
             bool fsdIssue = HostDrive == null || HostDrive.block == null
                 || !HostDrive.block.Enabled
@@ -2526,98 +3100,30 @@ namespace WarpDriveMod
             MatrixD currentMatrix = JumpOrientation;
             currentMatrix.Translation = currentPos;
 
+            // Hyperdictor failed: the rotation offsets of the sequence settle back to neutral while the ship resumes transit
+            float shakeMagnitude = CalculateCurrentShake(transitElapsedTicks, transitTotalTicks);
+            if (Hyperdiction != null)
+            {
+                Hyperdiction.ElapsedTicks++;
+                currentMatrix = Hyperdiction.ApplyOffsets(currentMatrix, Hyperdiction.ElapsedTicks);
+                shakeMagnitude = Math.Max(shakeMagnitude, Hyperdiction.ShakeAt(Hyperdiction.ElapsedTicks));
+                if (Hyperdiction.RecoveryComplete)
+                    Hyperdiction = null;
+            }
+
             if (MyAPIGateway.Multiplayer.IsServer || MyAPIGateway.Utilities.IsDedicated)
             {
-                mainGrid.Teleport(currentMatrix);
+                if (Hyperdiction != null)
+                    TeleportWithRotation(mainGrid, currentMatrix);
+                else
+                    mainGrid.Teleport(currentMatrix);
             }
 
             // Strictly disallow any rotation or linear physics movement during transit every tick
-            var connectedGrids = GridSystem?.gridGroup;
-            if (connectedGrids != null)
-            {
-                foreach (var g in connectedGrids)
-                {
-                    if (g?.Physics != null)
-                    {
-                        g.Physics.LinearVelocity = Vector3.Zero;
-                        g.Physics.AngularVelocity = Vector3.Zero;
-                    }
-                }
-            }
-            else if (mainGrid.Physics != null)
-            {
-                mainGrid.Physics.LinearVelocity = Vector3.Zero;
-                mainGrid.Physics.AngularVelocity = Vector3.Zero;
-            }
+            ZeroTransitVelocities(mainGrid);
 
             // Client-side effects
-            if (!MyAPIGateway.Utilities.IsDedicated)
-            {
-                bool isLocalPlayerOnboard = IsLocalPlayerOnboard();
-
-                if (isLocalPlayerOnboard)
-                {
-                    HyperspaceSunManager.Instance.RequestSuppression(this, true);
-
-                    // Player is riding the ship: glue audio anchor to camera position so extreme speeds never outrun the sound
-                    Vector3D soundAnchor = (MyAPIGateway.Session?.Camera != null)
-                        ? MyAPIGateway.Session.Camera.Position
-                        : currentPos;
-
-                    sound?.SetPosition(soundAnchor);
-
-                    if (transitElapsedTicks == 1)
-                    {
-                        InitTransitSound();
-                        if (transitSound != null)
-                        {
-                            transitSound.SetPosition(soundAnchor);
-                            transitSound.SetVelocity(Vector3.Zero);
-                            transitSound.CanPlayLoopSounds = true;
-                            transitSound.PlaySound(WarpSound.inHyperspace, true);
-                            transitSound.VolumeMultiplier = 1f;
-                        }
-                    }
-                    else if (transitElapsedTicks > 1 && transitSound != null)
-                    {
-                        // Keep emitter glued to listener with zero velocity to eliminate Doppler cutoff
-                        transitSound.SetPosition(soundAnchor);
-                        transitSound.SetVelocity(Vector3.Zero);
-
-                        if (!transitSound.IsPlaying)
-                        {
-                            transitSound.PlaySound(WarpSound.inHyperspace, true);
-                        }
-                    }
-
-                    // Keep WarpTunnel active throughout the journey until we exit into real space
-                    UpdateTunnelParticle();
-
-                    // Render client-side sky dome centered on camera to completely block realspace
-                    DrawHyperspaceBackdrop();
-
-                    // Hyperspace turbulence shake — SE handles damping/feel internally
-                    var activeCockpit = GridSystem?.FindMainCockpit() as MyCockpit;
-                    if (activeCockpit != null)
-                    {
-                        float shakeMagnitude = CalculateCurrentShake(transitElapsedTicks, transitTotalTicks);
-                        activeCockpit.AddShake(shakeMagnitude);
-                    }
-                }
-                else
-                {
-                    HyperspaceSunManager.Instance.ReleaseSuppression(this, true);
-
-                    // Player is not onboard (left the cockpit, stepped out, or watched from outside):
-                    // Stop the internal hyperspace tunnel sound and corridor particle immediately!
-                    if (transitSound != null && transitSound.IsPlaying)
-                    {
-                        transitSound.StopSound(true);
-                    }
-                    StopTunnelParticle();
-                }
-
-            }
+            UpdateTransitClientFX(currentPos, shakeMagnitude, true);
 
             // Trigger pre-arrival lead FX (~0.5s before exit, calculated from jump speed and 2km distance)
             double avgTransitSpeedMps = JumpDistance / Math.Max(0.5, (double)JourneyDuration);
@@ -2661,7 +3167,7 @@ namespace WarpDriveMod
             }
 
             // Emergency drop if no player or remote control is active on the ship during transit (debounced)
-            if (!HasSeatedPilot())
+            if (!IsIntercepting && !HasSeatedPilot())
             {
                 controlLossTicks++;
             }
@@ -2674,6 +3180,84 @@ namespace WarpDriveMod
             {
                 EmergencyDrop("CONTROL LOST - EMERGENCY DROP!");
                 return;
+            }
+        }
+
+        // Client-side transit effects: sun suppression, tunnel, backdrop, cockpit shake and (optionally) the inHyperspace loop.
+        // Shared by the normal transit tick and the hyperdiction sequence so the tunnel never drops out while a ship is held.
+        private void UpdateTransitClientFX(Vector3D currentPos, float shakeMagnitude, bool playTransitLoop)
+        {
+            if (MyAPIGateway.Utilities.IsDedicated)
+                return;
+
+            bool isLocalPlayerOnboard = IsLocalPlayerOnboard();
+
+            if (isLocalPlayerOnboard)
+            {
+                HyperspaceSunManager.Instance.RequestSuppression(this, true);
+
+                // Player is riding the ship: glue audio anchor to camera position so extreme speeds never outrun the sound
+                Vector3D soundAnchor = (MyAPIGateway.Session?.Camera != null)
+                    ? MyAPIGateway.Session.Camera.Position
+                    : currentPos;
+
+                sound?.SetPosition(soundAnchor);
+
+                if (playTransitLoop)
+                {
+                    if (transitElapsedTicks == 1)
+                    {
+                        InitTransitSound();
+                        if (transitSound != null)
+                        {
+                            transitSound.SetPosition(soundAnchor);
+                            transitSound.SetVelocity(Vector3.Zero);
+                            transitSound.CanPlayLoopSounds = true;
+                            transitSound.PlaySound(WarpSound.inHyperspace, true);
+                            transitSound.VolumeMultiplier = 1f;
+                        }
+                    }
+                    else if (transitElapsedTicks > 1 && transitSound != null)
+                    {
+                        // Keep emitter glued to listener with zero velocity to eliminate Doppler cutoff
+                        transitSound.SetPosition(soundAnchor);
+                        transitSound.SetVelocity(Vector3.Zero);
+
+                        if (!transitSound.IsPlaying)
+                        {
+                            transitSound.PlaySound(WarpSound.inHyperspace, true);
+                        }
+                    }
+                }
+
+                // Keep WarpTunnel active throughout the journey until we exit into real space
+                UpdateTunnelParticle();
+
+                // Render client-side sky dome centered on camera to completely block realspace
+                DrawHyperspaceBackdrop();
+
+                // Hyperspace turbulence shake — SE handles damping/feel internally
+                var activeCockpit = GridSystem?.FindMainCockpit() as MyCockpit;
+                if (activeCockpit != null)
+                {
+                    activeCockpit.AddShake(Hyperdiction == null ? ShakeShaper.Natural(shakeMagnitude, 0.3f) : shakeMagnitude);
+                }
+            }
+            else
+            {
+                HyperspaceSunManager.Instance.ReleaseSuppression(this, true);
+
+                // Player is not onboard (left the cockpit, stepped out, or watched from outside):
+                // Stop the internal hyperspace tunnel sound and corridor particle immediately!
+                if (transitSound != null && transitSound.IsPlaying)
+                {
+                    transitSound.StopSound(true);
+                }
+                if (hyperdictionSound != null && hyperdictionSound.IsPlaying)
+                {
+                    hyperdictionSound.StopSound(true);
+                }
+                StopTunnelParticle();
             }
         }
 
@@ -2691,6 +3275,8 @@ namespace WarpDriveMod
         // Drops out of Hyperspace at JumpDestination
         public void ExitHyperspace()
         {
+            Hyperdiction = null;
+            EndIntercept();
             HyperspaceSunManager.Instance.ReleaseSuppression(this, false);
             var mainGrid = GridSystem?.mainGrid;
             if (mainGrid == null) return;
@@ -2943,6 +3529,9 @@ namespace WarpDriveMod
             Vector3D forward = JumpDirection;
             Vector3D origin = mainGrid.PositionComp.WorldAABB.Center;
 
+            // While a Hyperdictor shakes the ship, keep the tunnel's "up" fixed in space so the ship's roll shows against it
+            Vector3D tunnelUp = (Hyperdiction != null && JumpOrientation != default(MatrixD)) ? (Vector3D)JumpOrientation.Up : (Vector3D)gridMatrix.Up;
+
             double halfExtents = mainGrid.PositionComp.WorldAABB.HalfExtents.AbsMax();
             double forwardOffset = Math.Max(halfExtents * 6.0, 145.0);
             Vector3D effectOffset = forward * forwardOffset;
@@ -2994,6 +3583,9 @@ namespace WarpDriveMod
             Vector3D forward = JumpDirection;
             Vector3D origin = mainGrid.PositionComp.WorldAABB.Center;
 
+            // While a Hyperdictor shakes the ship, keep the tunnel's "up" fixed in space so the ship's roll shows against it
+            Vector3D tunnelUp = (Hyperdiction != null && JumpOrientation != default(MatrixD)) ? (Vector3D)JumpOrientation.Up : (Vector3D)gridMatrix.Up;
+
             double halfExtents = mainGrid.PositionComp.WorldAABB.HalfExtents.AbsMax();
             double forwardOffset = Math.Max(halfExtents * 6.0, 145.0);
             Vector3D effectOffset = forward * forwardOffset;
@@ -3002,13 +3594,13 @@ namespace WarpDriveMod
 
             if (tunnelParticle != null && !tunnelParticle.IsStopped)
             {
-                MatrixD frontDir = MatrixD.CreateWorld(frontOrigin, -forward, gridMatrix.Up);
+                MatrixD frontDir = MatrixD.CreateWorld(frontOrigin, -forward, tunnelUp);
                 tunnelParticle.WorldMatrix = frontDir;
             }
 
             if (tunnelParticleRear != null && !tunnelParticleRear.IsStopped)
             {
-                MatrixD rearDir = MatrixD.CreateWorld(rearOrigin, forward, gridMatrix.Up);
+                MatrixD rearDir = MatrixD.CreateWorld(rearOrigin, forward, tunnelUp);
                 tunnelParticleRear.WorldMatrix = rearDir;
             }
         }
@@ -3075,7 +3667,8 @@ namespace WarpDriveMod
                     return;
 
                 var mainGrid = GridSystem.mainGrid;
-                MatrixD gridMatrix = mainGrid.WorldMatrix;
+                // Held by a Hyperdictor: keep the sky box fixed in space, otherwise it turns with the ship and hides every kick and roll
+                MatrixD gridMatrix = (Hyperdiction != null && JumpOrientation != default(MatrixD)) ? JumpOrientation : mainGrid.WorldMatrix;
                 Vector3D center = mainGrid.PositionComp.WorldAABB.Center;
 
                 double halfExtents = mainGrid.PositionComp.WorldAABB.HalfExtents.AbsMax();
@@ -3175,7 +3768,7 @@ namespace WarpDriveMod
             SpawnGlobalArrivalLeadFX(destination, direction, scale, speedMps, isPrototech);
         }
 
-        private void SpawnJumpArrivalFX()
+        private void SpawnJumpArrivalFX(Vector3D? positionOverride = null)
         {
             if (MyAPIGateway.Utilities.IsDedicated || GridSystem?.mainGrid == null) return;
 
@@ -3188,7 +3781,9 @@ namespace WarpDriveMod
                     direction = mainGrid.WorldMatrix.Forward;
 
                 Vector3D destination = JumpDestination;
-                if (destination == Vector3D.Zero)
+                if (positionOverride.HasValue)
+                    destination = positionOverride.Value;
+                else if (destination == Vector3D.Zero)
                     destination = mainGrid.WorldMatrix.Translation;
 
                 float forwardOffset = (float)(iGrid.LocalAABB.HalfExtents.Z + 8f);
@@ -3603,6 +4198,119 @@ namespace WarpDriveMod
                     line(pos + (right * (w * 0.5f)) + (up * (h * 0.35f)), pTR);
                     line(pTR, pBR);
                     break;
+            }
+        }
+
+        public void UpdateFleetDroneAutoSteer()
+        {
+            if (!IsFleetHolding || GridSystem?.mainGrid == null || GridSystem.gridGroup == null)
+                return;
+
+            // If a human is piloting or actively remote-controlling the ship, do not override gyros!
+            if (HasHumanPilot())
+            {
+                ResetFleetAutoSteerGyros();
+                return;
+            }
+
+            var cockpit = GridSystem.FindMainCockpit();
+            MatrixD refMatrix = (cockpit != null) ? cockpit.WorldMatrix : GridSystem.mainGrid.WorldMatrix;
+
+            Vector3D targetDir = Vector3D.Zero;
+            if (JumpDirection.LengthSquared() > 0.001)
+            {
+                targetDir = JumpDirection;
+            }
+            else
+            {
+                var lobby = FleetJumpSystem.GetLobbyForGrid(GridSystem.mainGrid.EntityId);
+                if (lobby != null)
+                {
+                    targetDir = (lobby.Mode == JumpMode.GpsWaypoint && lobby.TargetGpsCoords.HasValue)
+                        ? Vector3D.Normalize(lobby.TargetGpsCoords.Value - refMatrix.Translation)
+                        : (lobby.DepartureOrientation.Forward);
+                }
+                else if (SelectedGpsCoords.HasValue)
+                {
+                    targetDir = Vector3D.Normalize(SelectedGpsCoords.Value - refMatrix.Translation);
+                }
+                else
+                {
+                    targetDir = refMatrix.Forward;
+                }
+            }
+
+            if (targetDir.LengthSquared() < 0.001)
+                return;
+
+            double dot = MathHelper.Clamp(Vector3D.Dot(refMatrix.Forward, targetDir), -1.0, 1.0);
+            double angleRad = Math.Acos(dot);
+            double angleDeg = MathHelper.ToDegrees(angleRad);
+
+            var gyros = new List<IMyGyro>();
+            foreach (var igrid in GridSystem.gridGroup)
+            {
+                var cg = igrid as MyCubeGrid;
+                if (cg == null) continue;
+                foreach (var b in cg.GetFatBlocks())
+                {
+                    var g = b as IMyGyro;
+                    if (g != null && g.IsFunctional && g.Enabled)
+                        gyros.Add(g);
+                }
+            }
+
+            if (gyros.Count == 0) return;
+
+            if (angleDeg <= 1.0)
+            {
+                // Aligned within 1 degree -> dampen and hold
+                foreach (var g in gyros)
+                {
+                    g.GyroOverride = true;
+                    g.Pitch = 0f;
+                    g.Yaw = 0f;
+                    g.Roll = 0f;
+                }
+                return;
+            }
+
+            Vector3D axisWorld = Vector3D.Cross(refMatrix.Forward, targetDir);
+            if (axisWorld.LengthSquared() > 1e-6)
+                axisWorld = Vector3D.Normalize(axisWorld);
+
+            // Proportional velocity controller capped at 3.0 rad/s
+            double speed = MathHelper.Clamp(angleRad * 2.5, 0.2, 3.0);
+            Vector3D worldAngVel = axisWorld * speed;
+
+            foreach (var g in gyros)
+            {
+                Vector3D localAngVel = Vector3D.TransformNormal(worldAngVel, MatrixD.Transpose(g.WorldMatrix));
+                g.GyroOverride = true;
+                g.Pitch = (float)localAngVel.X;
+                g.Yaw = (float)localAngVel.Y;
+                g.Roll = (float)localAngVel.Z;
+            }
+        }
+
+        public void ResetFleetAutoSteerGyros()
+        {
+            if (GridSystem?.gridGroup == null) return;
+            foreach (var igrid in GridSystem.gridGroup)
+            {
+                var cg = igrid as MyCubeGrid;
+                if (cg == null) continue;
+                foreach (var b in cg.GetFatBlocks())
+                {
+                    var g = b as IMyGyro;
+                    if (g != null && g.GyroOverride)
+                    {
+                        g.GyroOverride = false;
+                        g.Pitch = 0f;
+                        g.Yaw = 0f;
+                        g.Roll = 0f;
+                    }
+                }
             }
         }
     }

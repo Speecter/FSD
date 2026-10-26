@@ -259,7 +259,7 @@ namespace WarpDriveMod
             long leaderOwnerId = (mainGrid.BigOwners != null && mainGrid.BigOwners.Count > 0) ? mainGrid.BigOwners[0] : playerId;
             long factionId = GetGridFactionId(mainGrid);
 
-            // Enforce sector rule: Only 1 friendly fleet jump lobby active per 5 km sector
+            // Enforce sector rule: If a friendly fleet jump lobby is active within 5 km, join it instead of erroring!
             Vector3D originPos = mainGrid.PositionComp.GetPosition();
             foreach (var kvp in _activeLobbies)
             {
@@ -271,7 +271,7 @@ namespace WarpDriveMod
                     double dist = Vector3D.Distance(existing.DepartureOrigin, originPos);
                     if (dist <= FLEET_SCAN_RADIUS)
                     {
-                        MyAPIGateway.Utilities.ShowNotification("Another friendly Fleet Jump is already active within 5 km! Move away or join it.", 4000, "Red");
+                        JoinFleetJump(mainGrid, playerId);
                         return;
                     }
                 }
@@ -483,6 +483,7 @@ namespace WarpDriveMod
                     // Check if grid has a seated pilot or an unmanned working remote control
                     bool hasSeatedPilot = false;
                     bool hasWorkingRemoteControl = false;
+                    bool hasActiveRemotePilot = false;
 
                     foreach (var fat in grid.GetFatBlocks())
                     {
@@ -492,27 +493,22 @@ namespace WarpDriveMod
 
                         var rc = fat as IMyRemoteControl;
                         if (rc != null && rc.IsFunctional)
+                        {
                             hasWorkingRemoteControl = true;
+                            if (rc.IsUnderControl)
+                                hasActiveRemotePilot = true;
+                        }
                     }
 
-                    if (hasSeatedPilot)
+                    if (hasSeatedPilot || hasActiveRemotePilot)
                     {
                         // Send Invitation notification to players on this grid
                         NotifyGridOfFleetInvite(grid, lobby);
                     }
                     else if (hasWorkingRemoteControl)
                     {
-                        // Unmanned drone with Remote Control: Only auto-join if owned by same player or same faction!
-                        long gridOwnerId = (grid.BigOwners != null && grid.BigOwners.Count > 0) ? grid.BigOwners[0] : 0L;
-                        long gridFactionId = GetGridFactionId(grid);
-
-                        bool isSameOwnerOrFaction = (leaderPlayerId != 0 && leaderPlayerId == gridOwnerId) ||
-                                                    (lobby.LeaderFactionId != 0 && lobby.LeaderFactionId == gridFactionId);
-
-                        if (isSameOwnerOrFaction)
-                        {
-                            JoinFleetJump(grid, leaderPlayerId);
-                        }
+                        // Unmanned drone with Remote Control: Auto-join friendly fleet!
+                        JoinFleetJump(grid, leaderPlayerId);
                     }
                 }
             }
@@ -845,29 +841,57 @@ namespace WarpDriveMod
                 return;
             }
 
+            // Leader alignment check
+            double leaderOffset = GetMemberAlignmentOffset(leaderGridId, lobby);
+            if (leaderOffset > HyperspaceSystem.ALIGNMENT_TOLERANCE_DEG)
+            {
+                MyAPIGateway.Utilities.ShowNotification($"Cannot jump: Align leader ship with target! (Offset: {leaderOffset:F1}°, Max {HyperspaceSystem.ALIGNMENT_TOLERANCE_DEG:F1}°)", 4000, "Red");
+                return;
+            }
+
             // 2. Member status check: ensure all wingmen are cooled down and aligned (<= 5.0°)
-            for (int i = 0; i < lobby.Members.Count; i++)
+            for (int i = lobby.Members.Count - 1; i >= 1; i--)
             {
                 var m = lobby.Members[i];
                 var mGrid = MyEntities.GetEntityById(m.GridEntityId) as MyCubeGrid;
+                HyperspaceSystem memberHs = null;
                 if (mGrid != null)
                 {
                     foreach (var fat in mGrid.GetFatBlocks())
                     {
                         var drive = fat?.GameLogic?.GetAs<WarpDrive>();
-                        if (drive?.hyperspace != null && drive.hyperspace.State == HyperspaceSystem.HyperState.Cooldown)
+                        if (drive?.hyperspace != null)
                         {
-                            MyAPIGateway.Utilities.ShowNotification($"Cannot jump: {m.GridName}'s FSD is still cooling down!", 4000, "Red");
-                            return;
+                            memberHs = drive.hyperspace;
+                            break;
                         }
                     }
+                }
+
+                if (memberHs != null && memberHs.State == HyperspaceSystem.HyperState.Cooldown)
+                {
+                    MyAPIGateway.Utilities.ShowNotification($"Cannot jump: {m.GridName}'s FSD is still cooling down!", 4000, "Red");
+                    return;
                 }
 
                 double offset = GetMemberAlignmentOffset(m.GridEntityId, lobby);
                 if (offset > HyperspaceSystem.ALIGNMENT_TOLERANCE_DEG)
                 {
-                    MyAPIGateway.Utilities.ShowNotification($"Cannot jump: {m.GridName} is not aligned (Offset: {offset:F1}°, Max {HyperspaceSystem.ALIGNMENT_TOLERANCE_DEG:F1}°)", 4000, "Red");
-                    return;
+                    bool isManned = memberHs != null && memberHs.HasHumanPilot();
+                    if (isManned)
+                    {
+                        MyAPIGateway.Utilities.ShowNotification($"Cannot jump: {m.GridName} is not aligned (Offset: {offset:F1}°, Max {HyperspaceSystem.ALIGNMENT_TOLERANCE_DEG:F1}°)", 4000, "Red");
+                        return;
+                    }
+                    else
+                    {
+                        // Unmanned drone failed to align in time: leave behind!
+                        MyAPIGateway.Utilities.ShowNotification($"{m.GridName} was not aligned ({offset:F1}°) and was left behind.", 4000, "White");
+                        memberHs?.ResetFleetAutoSteerGyros();
+                        memberHs?.AbortJump("FLEET JUMP LEFT BEHIND - FAILED ALIGNMENT");
+                        _gridToLeaderMap.Remove(m.GridEntityId);
+                        lobby.Members.RemoveAt(i);
+                    }
                 }
             }
 
@@ -1237,11 +1261,26 @@ namespace WarpDriveMod
         private static bool IsFriendlyGrid(IMyCubeGrid grid, long leaderPlayerId, long leaderFactionId)
         {
             if (grid == null) return false;
-            long gridOwnerId = (grid.BigOwners != null && grid.BigOwners.Count > 0) ? grid.BigOwners[0] : 0L;
-            if (gridOwnerId == 0L) return false; // Unowned grids cannot join fleet
+
+            // In singleplayer / local play, unowned grids are friendly player grids
+            if (!MyAPIGateway.Multiplayer.MultiplayerActive && (grid.BigOwners == null || grid.BigOwners.Count == 0))
+                return true;
 
             long gridFactionId = GetGridFactionId(grid);
-            return IsFriendlyFaction(leaderFactionId, gridFactionId, leaderPlayerId, gridOwnerId);
+            if (grid.BigOwners != null && grid.BigOwners.Count > 0)
+            {
+                foreach (var owner in grid.BigOwners)
+                {
+                    if (IsFriendlyFaction(leaderFactionId, gridFactionId, leaderPlayerId, owner))
+                        return true;
+                }
+            }
+            else if (leaderFactionId == 0 && gridFactionId == 0)
+            {
+                return true;
+            }
+
+            return false;
         }
 
         private static bool IsFriendlyFaction(long fac1, long fac2, long p1, long p2)

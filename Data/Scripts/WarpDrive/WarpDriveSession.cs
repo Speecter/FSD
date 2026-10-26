@@ -14,6 +14,7 @@ using Sandbox.Game.EntityComponents;
 using VRage.ModAPI;
 using VRage.Game.Entity;
 using ProtoBuf;
+using VRageMath;
 
 namespace WarpDriveMod
 {
@@ -28,16 +29,20 @@ namespace WarpDriveMod
         public static MySoundPair cruiseEndSoundProto = new MySoundPair("FSD_Proto_JumpOut", true);
         public static MySoundPair gravityGlideOn = new MySoundPair("glide_on", true);
         public static MySoundPair gravityGlideOff = new MySoundPair("glide_off", true);
+        public static MySoundPair spoolStop = new MySoundPair("ArcHudAntennaOff", true);
         public static MySoundPair hyperspaceJump = new MySoundPair("Hyperspace_jump", true);
         public static MySoundPair fsdHyperCharge = new MySoundPair("fsd_hyper_charge", true);
         public static MySoundPair engagingHyperspace = new MySoundPair("engaging_hyperspace", true);
-        public static MySoundPair hyperdiction = new MySoundPair("hyperdiction", true);
+        public static MySoundPair hyperdiction = new MySoundPair("hyperdiction", false);
         public static MySoundPair inHyperspace = new MySoundPair("inHyperSpace", true);
         public static MySoundPair holdCharge = new MySoundPair("hold_charge", true);
         public static MySoundPair spoolDown = new MySoundPair("spool_down", true);
         public static MySoundPair emergencyDropSound = new MySoundPair("SuperCruiseGravity", true);
         public static MySoundPair jumpInSound = new MySoundPair("quantum_jumpin", true);
         public static MySoundPair jumpOutSound = new MySoundPair("quantum_jumpout", true);
+        public static MySoundPair hyperdictorCharge = new MySoundPair("Hyperdictor_charge", true);
+        public static MySoundPair hyperdictorEngaged = new MySoundPair("Hyperdictor_engaged", true);
+        public static MySoundPair hyperdictorReactor = new MySoundPair("ArcBlockReactorSm", true);
     }
 
     [ProtoContract]
@@ -75,6 +80,8 @@ namespace WarpDriveMod
         public bool clearSpeed { get; set; }
         [ProtoMember(7)]
         public long cockpitId { get; set; }
+        [ProtoMember(8)]
+        public bool spoolStop { get; set; }
     }
 
     [ProtoContract]
@@ -115,10 +122,51 @@ namespace WarpDriveMod
         public bool isArrivalLead { get; set; }
     }
 
+    [ProtoContract]
+    public class HyperdictorToggleMessage
+    {
+        [ProtoMember(1)]
+        public long entityId { get; set; }
+        [ProtoMember(2)]
+        public long sendingPlayerID { get; set; }
+    }
+
+    [ProtoContract]
+    public class HyperdictorSyncMessage
+    {
+        [ProtoMember(1)]
+        public long entityId { get; set; }
+        [ProtoMember(2)]
+        public int state { get; set; }
+        [ProtoMember(3)]
+        public float storedPowerRatio { get; set; }
+        [ProtoMember(4)]
+        public int cooldownTicksRemaining { get; set; }
+    }
+
+    [ProtoContract]
+    public class HyperdictionSequenceMessage
+    {
+        [ProtoMember(1)]
+        public int kind { get; set; }
+        [ProtoMember(2)]
+        public long victimGridEntityId { get; set; }
+        [ProtoMember(3)]
+        public long hyperdictorBlockEntityId { get; set; }
+        [ProtoMember(4)]
+        public int randomSeed { get; set; }
+        [ProtoMember(5)]
+        public Vector3D dropPosition { get; set; }
+        [ProtoMember(6)]
+        public float journeySeconds { get; set; }
+    }
+
     [MySessionComponentDescriptor(MyUpdateOrder.Simulation)]
     public class WarpDriveSession : MySessionComponentBase
     {
         public static WarpDriveSession instance;
+        public static WarpDriveSession Instance => instance;
+        public HyperdictionSession hyperdictionSession { get; private set; }
         public Random rand { get; private set; } = new Random();
         public long runtime { get; private set; } = 0;
 
@@ -131,9 +179,16 @@ namespace WarpDriveMod
         public const ushort warpSpeedPacket = 4378;
         public const ushort warpConfigPacket = 4389;
         public const ushort warpStatePacket = 4375;
+        public const ushort debugProxPacket = 4376;
         public const ushort hyperspaceTogglePacket = 4390;
         public const ushort hyperspaceFXPacket = 4391;
         public const ushort fleetJumpPacket = 4392;
+        public const ushort hyperdictorTogglePacket = 4393;
+        public const ushort hyperdictorSyncPacket = 4394;
+        public const ushort hyperdictionSequencePacket = 4395;
+        public bool debugDraw;
+        public bool debugProx = true;
+        private readonly MyStringId debugRayMaterial = MyStringId.GetOrCompute("Square");
 
         private readonly HashSet<HyperspaceSystem> hyperspaceSystems = new HashSet<HyperspaceSystem>();
         private readonly HashSet<CapitalFSD> capitalFSDSystems = new HashSet<CapitalFSD>();
@@ -207,6 +262,53 @@ namespace WarpDriveMod
             return false;
         }
 
+        public HashSet<HyperspaceSystem> GetHyperspaceSystems() => hyperspaceSystems;
+        public HashSet<CapitalFSD> GetCapitalFSDSystems() => capitalFSDSystems;
+
+        public HyperspaceSystem GetGridHyperspace(IMyCubeGrid grid)
+        {
+            if (grid == null) return null;
+            foreach (var hs in hyperspaceSystems)
+            {
+                if (hs?.gridSystem?.mainGrid == grid)
+                    return hs;
+            }
+            return null;
+        }
+
+        public HyperspaceSystem GetGridHyperspace(long gridEntityId)
+        {
+            if (gridEntityId == 0) return null;
+            foreach (var hs in hyperspaceSystems)
+            {
+                if (hs?.gridSystem?.mainGrid?.EntityId == gridEntityId)
+                    return hs;
+            }
+            return null;
+        }
+
+        public CapitalFSD GetGridCapitalFSD(IMyCubeGrid grid)
+        {
+            if (grid == null) return null;
+            foreach (var cap in capitalFSDSystems)
+            {
+                if (cap?.gridSystem?.mainGrid == grid)
+                    return cap;
+            }
+            return null;
+        }
+
+        public CapitalFSD GetGridCapitalFSD(long gridEntityId)
+        {
+            if (gridEntityId == 0) return null;
+            foreach (var cap in capitalFSDSystems)
+            {
+                if (cap?.gridSystem?.mainGrid?.EntityId == gridEntityId)
+                    return cap;
+            }
+            return null;
+        }
+
         public WarpDriveSession()
         {
             instance = this;
@@ -221,6 +323,12 @@ namespace WarpDriveMod
                 Settings.GetShared();
 
                 MyAPIGateway.Multiplayer.RegisterSecureMessageHandler(warpConfigPacket, ReceiveWarpConfig);
+                MyAPIGateway.Multiplayer.RegisterSecureMessageHandler(debugProxPacket, ReceiveDebugProx);
+
+                // Registered here (not in InitJumpControl) so a Hyperdictor works even when the world has no FSD block loaded
+                MyAPIGateway.Multiplayer.RegisterSecureMessageHandler(hyperdictorTogglePacket, ReceiveHyperdictorToggle);
+                MyAPIGateway.Multiplayer.RegisterSecureMessageHandler(hyperdictorSyncPacket, ReceiveHyperdictorSync);
+                MyAPIGateway.Multiplayer.RegisterSecureMessageHandler(hyperdictionSequencePacket, ReceiveHyperdictionSequence);
 
                 MyVisualScriptLogicProvider.PlayerLeftCockpit += PlayerLeftCockpit;
 
@@ -230,7 +338,11 @@ namespace WarpDriveMod
                 if (!MyAPIGateway.Utilities.IsDedicated && !MyAPIGateway.Multiplayer.IsServer)
                     RequestConfig();
 
+                if (!MyAPIGateway.Utilities.IsDedicated)
+                    MyAPIGateway.Utilities.MessageEntered += CommandRecieved;
+
                 HyperspaceSunManager.Instance.Init(ModContext?.ModPath);
+                hyperdictionSession = new HyperdictionSession();
             }
             catch (Exception)
             {
@@ -565,6 +677,61 @@ namespace WarpDriveMod
             system.PilotLeft(cockpit);
         }
 
+        private void CommandRecieved(string messageText, ref bool sendToOthers)
+        {
+            string[] words = messageText.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+            if (words.Length == 0 || !words[0].Equals("/FSD", StringComparison.OrdinalIgnoreCase))
+                return;
+
+            sendToOthers = false;
+
+            string setting = words.Length > 1 ? words[1].ToLowerInvariant() : "";
+            if (setting != "debugdraw" && setting != "debugprox")
+            {
+                MyAPIGateway.Utilities.ShowMessage("FSD", "Invalid command");
+                return;
+            }
+
+            bool state;
+            if (words.Length != 3 || !bool.TryParse(words[2], out state))
+            {
+                MyAPIGateway.Utilities.ShowMessage("FSD", "Invalid bool");
+                return;
+            }
+
+            if (setting == "debugdraw")
+            {
+                if (!MyAPIGateway.Multiplayer.IsServer)
+                {
+                    MyAPIGateway.Utilities.ShowMessage("FSD", "Unable to change debug settings. Player is not host!");
+                    return;
+                }
+
+                debugDraw = state;
+            }
+            else
+            {
+                if (MyAPIGateway.Session.PromoteLevel < MyPromoteLevel.Admin)
+                {
+                    MyAPIGateway.Utilities.ShowMessage("FSD", "Unable to change DebugProx. Player is not admin!");
+                    return;
+                }
+
+                if (MyAPIGateway.Multiplayer.IsServer)
+                    debugProx = state;
+                else
+                    MyAPIGateway.Multiplayer.SendMessageToServer(debugProxPacket, new[] { state ? (byte)1 : (byte)0 });
+            }
+
+            MyAPIGateway.Utilities.ShowMessage("FSD", (setting == "debugdraw" ? "DebugDraw" : "DebugProx") + " set to " + (state ? "true" : "false"));
+        }
+
+        private void ReceiveDebugProx(ushort channel, byte[] data, ulong sender, bool fromServer)
+        {
+            if (MyAPIGateway.Multiplayer.IsServer && data.Length == 1 && MyAPIGateway.Session.GetUserPromoteLevel(sender) >= MyPromoteLevel.Admin)
+                debugProx = data[0] == 1;
+        }
+
         private bool IsWarpDrive(IMyTerminalBlock block)
         {
             var drive = block?.GameLogic?.GetAs<WarpDrive>();
@@ -583,6 +750,7 @@ namespace WarpDriveMod
         public override void Simulate()
         {
             runtime++;
+            WarpDrive.debugDraw.Clear();
 
                 int budget = Math.Max(1, (exposureQueue.Count + 119) / 120); //rate limiting for grids with tons of sinks
                 while (budget-- > 0 && exposureQueue.Count > 0)
@@ -648,6 +816,8 @@ namespace WarpDriveMod
             {
                 HyperspaceSunManager.Instance.UpdateSimulation();
             }
+
+            hyperdictionSession?.UpdateSimulation();
         }
 
         public override void Draw()
@@ -657,6 +827,13 @@ namespace WarpDriveMod
 
             foreach (WarpSystem s in warpSystems)
                 s.Draw();
+
+            if (debugDraw)
+            {
+                Vector4 color = Color.Yellow;
+                foreach (LineD ray in WarpDrive.debugDraw)
+                    MySimpleObjectDraw.DrawLine(ray.From, ray.To, debugRayMaterial, ref color, 0.5f);
+            }
 
             HyperspaceSunManager.Instance.UpdateDraw();
         }
@@ -742,6 +919,27 @@ namespace WarpDriveMod
             return drive?.warpSystem != null && drive.warpSystem.valid;
         }
 
+        private void ReceiveHyperdictorToggle(ushort channel, byte[] data, ulong sender, bool fromServer)
+        {
+            var msg = MyAPIGateway.Utilities.SerializeFromBinary<HyperdictorToggleMessage>(data);
+            if (msg != null)
+                hyperdictionSession?.HandleToggleMessage(msg, sender);
+        }
+
+        private void ReceiveHyperdictorSync(ushort channel, byte[] data, ulong sender, bool fromServer)
+        {
+            var msg = MyAPIGateway.Utilities.SerializeFromBinary<HyperdictorSyncMessage>(data);
+            if (msg != null)
+                hyperdictionSession?.HandleSyncMessage(msg);
+        }
+
+        private void ReceiveHyperdictionSequence(ushort channel, byte[] data, ulong sender, bool fromServer)
+        {
+            var msg = MyAPIGateway.Utilities.SerializeFromBinary<HyperdictionSequenceMessage>(data);
+            if (msg != null)
+                hyperdictionSession?.HandleClientSequenceMessage(msg);
+        }
+
         protected override void UnloadData()
         {
             try
@@ -753,15 +951,21 @@ namespace WarpDriveMod
                 MyAPIGateway.Multiplayer.UnregisterSecureMessageHandler(warpSpeedPacket, ReceiveWarpSpeed);
                 MyAPIGateway.Multiplayer.UnregisterSecureMessageHandler(warpStatePacket, ReceiveWarpState);
                 MyAPIGateway.Multiplayer.UnregisterSecureMessageHandler(warpConfigPacket, ReceiveWarpConfig);
+                MyAPIGateway.Multiplayer.UnregisterSecureMessageHandler(debugProxPacket, ReceiveDebugProx);
                 MyAPIGateway.Multiplayer.UnregisterSecureMessageHandler(hyperspaceTogglePacket, ReceiveToggleHyperspace);
                 MyAPIGateway.Multiplayer.UnregisterSecureMessageHandler(hyperspaceFXPacket, ReceiveHyperspaceFX);
                 MyAPIGateway.Multiplayer.UnregisterSecureMessageHandler(fleetJumpPacket, ReceiveFleetJump);
+                MyAPIGateway.Multiplayer.UnregisterSecureMessageHandler(hyperdictorTogglePacket, ReceiveHyperdictorToggle);
+                MyAPIGateway.Multiplayer.UnregisterSecureMessageHandler(hyperdictorSyncPacket, ReceiveHyperdictorSync);
+                MyAPIGateway.Multiplayer.UnregisterSecureMessageHandler(hyperdictionSequencePacket, ReceiveHyperdictionSequence);
 
                 hyperspaceSystems.Clear();
                 capitalFSDSystems.Clear();
+                hyperdictionSession?.Close();
 
                 MyVisualScriptLogicProvider.PlayerLeftCockpit -= PlayerLeftCockpit;
                 MyVisualScriptLogicProvider.PlayerDisconnected -= PlayerDisconnected;
+                MyAPIGateway.Utilities.MessageEntered -= CommandRecieved;
 
                 exposureQueue.Clear();
 

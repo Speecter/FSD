@@ -20,6 +20,7 @@
         <string>UpgradeModule/PrototechFSDriveLarge_9S</string>
         <string>UpgradeModule/HeatSinkLarge</string>
         <string>UpgradeModule/HeatSinkVentLarge</string>
+        <string>UpgradeModule/HyperdictorLarge</string>
       </ItemIds>
     </Category>
 

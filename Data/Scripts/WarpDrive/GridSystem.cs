@@ -17,6 +17,7 @@ namespace WarpDriveMod
         public Dictionary<string, BlockCounter> blockCounters { get; private set; } = new Dictionary<string, BlockCounter>();
         public int id { get; private set; }
         public MyCubeGrid mainGrid => gridGroup.Min as MyCubeGrid;
+        public int blockCount => mainGrid?.BlocksCount ?? 0;
 
         private int staticCount;
         public Dictionary<MyCubeGrid, HashSet<HeatSink>> heatSinks = new Dictionary<MyCubeGrid, HashSet<HeatSink>>();
@@ -348,7 +349,26 @@ namespace WarpDriveMod
                 }
             }
 
-            return functionalCockpit;
+            if (functionalCockpit != null)
+                return functionalCockpit;
+
+            // 4. Any functional ship controller (Cockpit or Remote Control) even if thrusters are absent/unaligned
+            foreach (IMyCubeGrid igrid in gridGroup)
+            {
+                var grid = igrid as MyCubeGrid;
+                if (grid == null) continue;
+
+                foreach (MyCubeBlock block in grid.GetFatBlocks())
+                {
+                    var sc = block as IMyShipController;
+                    if (sc != null && sc.IsFunctional && !(sc is IMyCryoChamber))
+                    {
+                        return sc;
+                    }
+                }
+            }
+
+            return null;
         }
 
         public MatrixD FindWorldMatrix(IMyShipController cockpit = null)
