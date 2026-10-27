@@ -24,7 +24,7 @@ namespace WarpDriveMod
 
             var engageBtn = MyAPIGateway.TerminalControls.CreateControl<IMyTerminalControlButton, IMyUpgradeModule>("HyperdictorEngageBtn");
             engageBtn.Title = MyStringId.GetOrCompute("Engage / Disengage Interdiction Field");
-            engageBtn.Tooltip = MyStringId.GetOrCompute("Engages the 25 km hyperdiction field. The ship must be completely stationary and the capacitor fully charged.");
+            engageBtn.Tooltip = MyStringId.GetOrCompute("Engages the 50 km hyperdiction field. The ship must be completely stationary and the capacitor fully charged.");
             engageBtn.Enabled = IsHyperdictor;
             engageBtn.Visible = IsHyperdictor;
             engageBtn.SupportsMultipleBlocks = false;

@@ -559,7 +559,74 @@ namespace WarpDriveMod
         public double GetMaxJumpDistance(float powerInMW)
         {
             double calculatedMax = RANGE_MULTIPLIER_PER_MW * Math.Max(powerInMW, 0f);
+            calculatedMax = Math.Min(calculatedMax, GetAffordableDistance());
             return MathHelper.Clamp(calculatedMax, MIN_JUMP_DISTANCE, HARD_MAX_JUMP_DISTANCE);
+        }
+
+        // Hyperspace jumps are paid for with the energy stored in the Hyper Capacitors on the ship's grid
+        public const double JUMP_MWH_PER_KG_KM = 0.000000002;
+
+        public double GetJumpEnergyMWh(double distanceMeters)
+        {
+            float mass = HostDrive?.warpSystem?.GetShipMass() ?? 1f;
+            return mass * (distanceMeters / 1000.0) * JUMP_MWH_PER_KG_KM;
+        }
+
+        public double GetStoredEnergyMWh()
+        {
+            return HostDrive?.CapStoredMWh ?? 0f;
+        }
+
+        /// <summary>Longest jump (meters) the stored capacitor energy pays for. Can be below the minimum jump distance.</summary>
+        public double GetAffordableDistance()
+        {
+            double perMeter = GetJumpEnergyMWh(1.0);
+            return perMeter > 0.0 ? GetStoredEnergyMWh() / perMeter : 0.0;
+        }
+
+        // Hyperspace capacitor: it never draws more than this share of the ship's power, and a full charge takes between 1 and 5 minutes
+        public const double CAP_MAX_POWER_SHARE = 0.5;
+        public const double CAP_MIN_CHARGE_MINUTES = 1.0;
+        public const double CAP_MAX_CHARGE_MINUTES = 5.0;
+
+        /// <summary>
+        /// Most energy (MWh) the capacitor can hold: a full range jump, but no more than what CAP_MAX_POWER_SHARE of the ship's power
+        /// delivers in CAP_MAX_CHARGE_MINUTES. Heavy ships with little power therefore get a shorter maximum range instead of a longer wait.
+        /// </summary>
+        public double GetCapacitorCapacityMWh()
+        {
+            float shipPower = GetDrivePowerMW();
+            if (shipPower <= 0f)
+                return 0.0;
+
+            double fullRangeMWh = GetJumpEnergyMWh(Math.Min(RANGE_MULTIPLIER_PER_MW * shipPower, HARD_MAX_JUMP_DISTANCE));
+            double chargeableMWh = shipPower * CAP_MAX_POWER_SHARE * (CAP_MAX_CHARGE_MINUTES / 60.0);
+            return Math.Min(fullRangeMWh, chargeableMWh);
+        }
+
+        /// <summary>Power (MW) drawn while charging an empty capacitor of the given size: as fast as the power share allows, but never faster than CAP_MIN_CHARGE_MINUTES.</summary>
+        public double GetCapacitorChargePowerMW(double capacityMWh)
+        {
+            float shipPower = GetDrivePowerMW();
+            if (shipPower <= 0f || capacityMWh <= 0.0)
+                return 0.0;
+
+            double minutes = Math.Max(CAP_MIN_CHARGE_MINUTES, capacityMWh / (shipPower * CAP_MAX_POWER_SHARE) * 60.0);
+            return capacityMWh / (minutes / 60.0);
+        }
+
+        public bool HasEnergyForJump(double distanceMeters)
+        {
+            return GetStoredEnergyMWh() + 0.0001 >= GetJumpEnergyMWh(distanceMeters);
+        }
+
+        // Takes the jump's energy out of the capacitors (server / single player; clients get the new charge by sync)
+        private bool ConsumeJumpEnergy(double distanceMeters)
+        {
+            if (MyAPIGateway.Multiplayer.MultiplayerActive && !MyAPIGateway.Multiplayer.IsServer)
+                return true;
+
+            return HostDrive != null && HostDrive.TryDrainCapacitor((float)GetJumpEnergyMWh(distanceMeters));
         }
 
         public double GetCurrentManualDistance(float powerInMW)
@@ -1311,6 +1378,12 @@ namespace WarpDriveMod
             if (totalDist > maxRange)
             {
                 warpSys.SendMessage($"Target exceeds maximum range ({(maxRange / 1000):N0}km)!", 5f, "Red", playerId);
+                return false;
+            }
+
+            if (!HasEnergyForJump(totalDist))
+            {
+                warpSys.SendMessage($"INSUFFICIENT CAPACITOR CHARGE! Need {GetJumpEnergyMWh(totalDist):N1} MWh, stored {GetStoredEnergyMWh():N1} MWh", 5f, "Red", playerId);
                 return false;
             }
 
@@ -2259,6 +2332,10 @@ namespace WarpDriveMod
         /// <summary>True from the moment a Hyperdictor ordered this ship to chase a victim until the chase jump ends.</summary>
         public bool IsIntercepting { get; private set; }
 
+        /// <summary>The chase jump entered hyperspace and has not emergency-dropped: the ship is in the tunnel or already waiting
+        /// at the intercept point. Stays true after landing (until this ship's next jump) so an early arrival doesn't free the victim.</summary>
+        public bool InterceptCommitted { get; private set; }
+
         private const double INTERCEPT_MAX_BANK = 0.20;           // rad, lean into the turn
         private Vector3D interceptOmega;
         private double interceptBank;
@@ -2273,7 +2350,7 @@ namespace WarpDriveMod
         }
 
         /// <summary>Longest jump this ship's FSD can make with the power it has right now.</summary>
-        public double MaxInterceptRange { get { return GetMaxJumpDistance(GetDrivePowerMW()); } }
+        public double MaxInterceptRange { get { return Math.Min(RANGE_MULTIPLIER_PER_MW * GetDrivePowerMW(), Math.Min(GetAffordableDistance(), HARD_MAX_JUMP_DISTANCE)); } }
 
         /// <summary>Same hardware checks as a normal jump (health, power, not static, not in gravity) minus pilot and destination.</summary>
         public bool IsInterceptReady(out string reason)
@@ -2290,6 +2367,7 @@ namespace WarpDriveMod
             if (GridSystem.isStatic || warpSys.ConnectedStatic(mainGrid)) { reason = "SHIP IS STATIC"; return false; }
             if (warpSys.IsInGravity()) { reason = "IN GRAVITY WELL"; return false; }
             if (GridSystem.FindMainCockpit() == null) { reason = "NO CONTROL SEAT"; return false; }
+            if (GetStoredEnergyMWh() <= 0.0) { reason = "CAPACITORS DEPLETED"; return false; }
             return true;
         }
 
@@ -2321,6 +2399,8 @@ namespace WarpDriveMod
             Vector3D toDest = destination - origin;
             double dist = toDest.Length();
             if (dist < 1000.0)
+                return false;
+            if (!HasEnergyForJump(dist))
                 return false;
 
             preInterceptMode = Mode;
@@ -2482,15 +2562,18 @@ namespace WarpDriveMod
             // Manual-distance jumps follow the pilot's nose until the very end, so only a GPS target is predictable
             if (Mode != JumpMode.GpsWaypoint || JumpDistance < 1000.0)
                 return false;
-            if (State != HyperState.Charging && State != HyperState.Countdown)
+            if (State != HyperState.Charging && State != HyperState.HoldingCharge && State != HyperState.Countdown)
                 return false;
 
             double journey = FleetSynchronizedJourneyDuration > 0f
                 ? FleetSynchronizedJourneyDuration
                 : CalculateJourneyTime(JumpDistance, GetMaxJumpDistance(GetDrivePowerMW()));
+            // Holding: assume the pilot aligns right now (earliest possible entry), so a Hyperdictor's start keeps sliding back while it holds
             double until = State == HyperState.Charging
                 ? (chargeTotalTicks - chargeElapsedTicks + countdownTotalTicks) / 60.0
-                : (countdownTotalTicks - countdownElapsedTicks) / 60.0;
+                : State == HyperState.HoldingCharge
+                    ? COUNTDOWN_SECONDS
+                    : (countdownTotalTicks - countdownElapsedTicks) / 60.0;
 
             plan = new HyperdictionTransitPlan
             {
@@ -2726,6 +2809,7 @@ namespace WarpDriveMod
             checkedObstacle50 = false;
             checkedObstacle90 = false;
 
+            InterceptCommitted = false;
             EndIntercept();
             Hyperdiction = null;
             hyperdictionLeadFxSpawned = false;
@@ -2882,7 +2966,14 @@ namespace WarpDriveMod
                 return;
             }
 
+            if (!ConsumeJumpEnergy(JumpDistance))
+            {
+                AbortJump("INSUFFICIENT CAPACITOR CHARGE!");
+                return;
+            }
+
             State = HyperState.Active;
+            InterceptCommitted = IsIntercepting;
             transitElapsedTicks = 0;
             fsdLossTicks = 0;
             powerLossTicks = 0;

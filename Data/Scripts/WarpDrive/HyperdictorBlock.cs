@@ -34,15 +34,19 @@ namespace WarpDriveMod
 
         public const float POWER_REQUIRED_MW = 20.0f;
         public const float STANDBY_POWER_MW = 0.001f;
-        public const int CHARGE_TOTAL_TICKS = 45 * 60; // 45 seconds (2700 ticks)
         public const int COOLDOWN_TOTAL_TICKS = 10 * 60 * 60; // 10 minutes (36000 ticks)
-        public const double FIELD_RADIUS_METERS = 50000.0; // 25 km sphere
+        public const int CHARGE_TOTAL_TICKS = 45 * 60; // 45 seconds from empty at full power
+        public const double MAX_FIELD_RADIUS_METERS = 50000.0; // 50 km sphere
 
         public IMyFunctionalBlock Block { get; private set; }
         public MyCubeGrid MainGrid => Block?.CubeGrid as MyCubeGrid;
 
         public HyperdictorState State { get; private set; } = HyperdictorState.Off;
-        public float StoredChargeRatio { get; private set; } = 0.0f; // 0.0f to 1.0f
+
+        /// <summary>The Hyperdictor's own built-in capacitor, 0.0f to 1.0f. It is saved with the block and never touches the FSD's capacitor.</summary>
+        public float StoredChargeRatio { get; private set; } = 0.0f;
+        public double FieldRadiusMeters => MAX_FIELD_RADIUS_METERS;
+        private bool IsFull => StoredChargeRatio >= 0.999f;
         public int CooldownTicksRemaining { get; private set; } = 0;
 
         public bool IsEngaged => State == HyperdictorState.Engaged;
@@ -96,6 +100,7 @@ namespace WarpDriveMod
         private int _syncTick = 0;
         private bool _registeredWithSession = false;
         private int _engagedGraceTicks = 0;
+        private bool _warnedNoFsd = false;
 
         public override void Init(MyObjectBuilder_EntityBase objectBuilder)
         {
@@ -106,7 +111,6 @@ namespace WarpDriveMod
             if (Block == null) return;
 
             InitPowerSink();
-            LoadStorageData();
 
             if (!MyAPIGateway.Utilities.IsDedicated)
             {
@@ -144,6 +148,7 @@ namespace WarpDriveMod
         public override void UpdateOnceBeforeFrame()
         {
             base.UpdateOnceBeforeFrame();
+            LoadStorageData();
             HyperdictorControls.RegisterControls();
             HyperdictionSession.Instance?.RegisterHyperdictor(this);
             _registeredWithSession = true;
@@ -182,8 +187,8 @@ namespace WarpDriveMod
                 }
             }
 
-            // Save persistent data every 300 ticks (~5 seconds)
-            if (_syncTick % 300 == 0)
+            // Cooldown and stored energy are written whenever they change
+            if (_syncTick % 60 == 0)
             {
                 SaveStorageData();
             }
@@ -215,8 +220,8 @@ namespace WarpDriveMod
                     break;
 
                 case HyperdictorState.Charged:
-                    // Capacitor fully charged, awaiting manual engagement or maintaining charge
-                    if (StoredChargeRatio < 1.0f)
+                    // Built-in capacitor full, awaiting manual engagement
+                    if (!IsFull)
                     {
                         State = HyperdictorState.Charging;
                     }
@@ -231,7 +236,7 @@ namespace WarpDriveMod
                     if (IsGridStationary())
                     {
                         _isDisruptedByMotion = false;
-                        State = StoredChargeRatio >= 1.0f ? HyperdictorState.Charged : HyperdictorState.Charging;
+                        State = IsFull ? HyperdictorState.Charged : HyperdictorState.Charging;
                     }
                     break;
 
@@ -243,24 +248,17 @@ namespace WarpDriveMod
 
         private void UpdateChargingTick()
         {
+            // Charges only while fully powered; without power it simply pauses (no bleed), so a freshly loaded save keeps its charge
             float availablePower = _sink?.CurrentInputByType(MyResourceDistributorComponent.ElectricityId) ?? 0f;
-
             if (availablePower >= POWER_REQUIRED_MW * 0.95f)
+                StoredChargeRatio = Math.Min(1.0f, StoredChargeRatio + 1.0f / CHARGE_TOTAL_TICKS);
+
+            if (IsFull)
             {
-                // Accumulate capacitor charge
-                StoredChargeRatio += 1.0f / CHARGE_TOTAL_TICKS;
-                if (StoredChargeRatio >= 1.0f)
-                {
-                    StoredChargeRatio = 1.0f;
-                    State = HyperdictorState.Charged;
-                    PlaySpoolDownSound();
-                    NotifyShip("HYPERDICTOR CAPACITOR FULLY CHARGED - READY TO ENGAGE", "White");
-                }
-            }
-            else
-            {
-                // Slow bleed if power is cut
-                StoredChargeRatio = Math.Max(0.0f, StoredChargeRatio - (1.0f / (CHARGE_TOTAL_TICKS * 4f)));
+                StoredChargeRatio = 1.0f;
+                State = HyperdictorState.Charged;
+                PlaySpoolDownSound();
+                NotifyShip($"HYPERDICTOR CAPACITOR FULLY CHARGED - {FieldRadiusMeters / 1000.0:0.#} KM FIELD READY", "White");
             }
         }
 
@@ -288,6 +286,19 @@ namespace WarpDriveMod
                 NotifyShip("HYPERDICTOR DISENGAGED - INSUFFICIENT POWER (REQUIRES 20MW)", "Red");
                 return;
             }
+
+            // The field can be up while the ship's FSD can't make the chase (no drive, empty capacitor, damaged...). Say so once instead of silently catching nothing
+            if (!IsBusy)
+            {
+                string fsdReason;
+                if (HasUsableFsd(out fsdReason))
+                    _warnedNoFsd = false;
+                else if (!_warnedNoFsd)
+                {
+                    _warnedNoFsd = true;
+                    NotifyShip($"HYPERDICTOR FIELD UP BUT FSD UNAVAILABLE ({fsdReason}) - CANNOT INTERCEPT", "Red");
+                }
+            }
         }
 
         private void UpdateCooldownTick()
@@ -298,7 +309,6 @@ namespace WarpDriveMod
                 if (CooldownTicksRemaining == 0)
                 {
                     State = HyperdictorState.Off;
-                    StoredChargeRatio = 0.0f;
                     NotifyShip("HYPERDICTOR THERMAL DISSIPATION COMPLETE - READY TO RECHARGE", "Green");
                     PlaySpoolDownSound();
                 }
@@ -346,7 +356,7 @@ namespace WarpDriveMod
                 return;
             }
 
-            if (StoredChargeRatio < 0.999f)
+            if (!IsFull)
             {
                 NotifyPlayer(playerId, $"Cannot engage: Capacitor charging ({(int)(StoredChargeRatio * 100)}% / 100%)", "Red");
                 return;
@@ -356,7 +366,8 @@ namespace WarpDriveMod
             State = HyperdictorState.Engaged;
             _engagedGraceTicks = 20; // Allow 20 ticks (~0.33s) for SE distributor to allocate 20 MW
             _sink?.Update();
-            NotifyShip("HYPERDICTOR ENGAGED - 25KM INTERDICTION FIELD ACTIVE", "Green");
+            _warnedNoFsd = false;
+            NotifyShip($"HYPERDICTOR ENGAGED - {FieldRadiusMeters / 1000.0:0.#}KM INTERDICTION FIELD ACTIVE", "Green");
             SyncStateToClients();
         }
 
@@ -368,12 +379,12 @@ namespace WarpDriveMod
                 {
                     _isDisruptedByMotion = true;
                     State = HyperdictorState.Disrupted;
-                    StoredChargeRatio = Math.Max(0.0f, StoredChargeRatio - 0.25f); // 25% drain penalty
+                    StoredChargeRatio *= 0.75f; // 25% drain penalty
                     NotifyShip("HYPERDICTOR DISENGAGED - GRID MOVEMENT DETECTED!", "Red");
                 }
                 else
                 {
-                    State = StoredChargeRatio >= 1.0f ? HyperdictorState.Charged : HyperdictorState.Charging;
+                    State = IsFull ? HyperdictorState.Charged : HyperdictorState.Charging;
                 }
 
                 _engagedGraceTicks = 0;
@@ -406,10 +417,9 @@ namespace WarpDriveMod
             Vector3D blockPos = Block.GetPosition();
 
             // Charging loop sound
-            if (State == HyperdictorState.Charging && StoredChargeRatio < 1.0f)
+            if (State == HyperdictorState.Charging && !IsFull)
             {
-                float availablePower = _sink?.CurrentInputByType(MyResourceDistributorComponent.ElectricityId) ?? 0f;
-                if (availablePower >= POWER_REQUIRED_MW * 0.5f)
+                if ((_sink?.CurrentInputByType(MyResourceDistributorComponent.ElectricityId) ?? 0f) >= POWER_REQUIRED_MW * 0.5f)
                 {
                     if (_chargeEmitter == null)
                     {
@@ -493,10 +503,10 @@ namespace WarpDriveMod
             sb.AppendLine();
             sb.AppendLine("=== Frame Shift Hyperdictor ===");
             sb.AppendLine($"Target: Hyperspace / Witchspace Transits Only");
-            sb.AppendLine($"Interdiction: predictive - the ship's own FSD jumps in behind the target");
             string fsdReason;
             sb.AppendLine(HasUsableFsd(out fsdReason) ? "FSD: READY" : $"FSD: UNAVAILABLE ({fsdReason}) - HYPERDICTOR INOPERATIVE");
             sb.AppendLine($"Power Required: {POWER_REQUIRED_MW:0.0} MW");
+            sb.AppendLine($"Field Radius: {FieldRadiusMeters / 1000.0:0} km");
             sb.AppendLine($"Stationary Status: {(IsGridStationary() ? "Stationary (OK)" : "Moving (RESTRICTED)")}");
             sb.AppendLine();
 
@@ -585,9 +595,10 @@ namespace WarpDriveMod
         {
             if (msg == null) return;
 
+            StoredChargeRatio = MathHelper.Clamp(msg.storedPowerRatio, 0f, 1f);
+
             HyperdictorState previous = State;
             State = (HyperdictorState)msg.state;
-            StoredChargeRatio = msg.storedPowerRatio;
             CooldownTicksRemaining = msg.cooldownTicksRemaining;
 
             // Sounds are triggered by server logic, so remote clients play them from the state change
@@ -598,32 +609,37 @@ namespace WarpDriveMod
             }
         }
 
+        private int _lastSavedCooldown = -1;
+        private float _lastSavedRatio = -1f;
+
+        // Stores "cooldownTicks;chargeRatio", always with the invariant culture
         private void LoadStorageData()
         {
             try
             {
-                if (Entity.Storage == null)
-                    Entity.Storage = new MyModStorageComponent();
-
                 string val;
-                if (Entity.Storage.TryGetValue(STORAGE_GUID, out val) && !string.IsNullOrEmpty(val))
+                if (Entity.Storage != null && Entity.Storage.TryGetValue(STORAGE_GUID, out val) && !string.IsNullOrEmpty(val))
                 {
                     string[] parts = val.Split(';');
-                    if (parts.Length >= 2)
+                    int cooldown;
+                    if (int.TryParse(parts[0], System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out cooldown))
                     {
-                        int cooldown;
-                        float charge;
-                        if (int.TryParse(parts[0], out cooldown))
-                            CooldownTicksRemaining = cooldown;
-                        if (float.TryParse(parts[1], out charge))
-                            StoredChargeRatio = MathHelper.Clamp(charge, 0f, 1f);
-
+                        CooldownTicksRemaining = Math.Max(0, cooldown);
                         if (CooldownTicksRemaining > 0)
                             State = HyperdictorState.CoolingDown;
-                        else if (StoredChargeRatio >= 1.0f)
+                    }
+
+                    float stored;
+                    if (parts.Length >= 2 && float.TryParse(parts[1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out stored))
+                    {
+                        StoredChargeRatio = MathHelper.Clamp(stored, 0f, 1f);
+                        if (CooldownTicksRemaining <= 0 && IsFull)
                             State = HyperdictorState.Charged;
                     }
                 }
+
+                _lastSavedCooldown = CooldownTicksRemaining;
+                _lastSavedRatio = StoredChargeRatio;
             }
             catch (Exception ex)
             {
@@ -633,12 +649,23 @@ namespace WarpDriveMod
 
         private void SaveStorageData()
         {
+            if (!(MyAPIGateway.Multiplayer.IsServer || !MyAPIGateway.Multiplayer.MultiplayerActive))
+                return;
+            if (_lastSavedCooldown < 0)
+                return; // not loaded yet, saving now would overwrite the stored values
+            if (CooldownTicksRemaining == _lastSavedCooldown && Math.Abs(StoredChargeRatio - _lastSavedRatio) < 0.0005f)
+                return;
+
             try
             {
                 if (Entity.Storage == null)
                     Entity.Storage = new MyModStorageComponent();
 
-                Entity.Storage.SetValue(STORAGE_GUID, $"{CooldownTicksRemaining};{StoredChargeRatio}");
+                Entity.Storage.SetValue(STORAGE_GUID,
+                    CooldownTicksRemaining.ToString(System.Globalization.CultureInfo.InvariantCulture) + ";" +
+                    StoredChargeRatio.ToString("R", System.Globalization.CultureInfo.InvariantCulture));
+                _lastSavedCooldown = CooldownTicksRemaining;
+                _lastSavedRatio = StoredChargeRatio;
             }
             catch (Exception ex)
             {
@@ -648,6 +675,7 @@ namespace WarpDriveMod
 
         public override void Close()
         {
+            SaveStorageData();
             StopChargeLoopSound();
             StopReactorSound(true);
             if (_localEmitter != null && _localEmitter.IsPlaying)

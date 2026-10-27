@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Definitions xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <!--
+  The game only writes MyModStorageComponent values to the save when their GUID is registered here.
+  Any GUID used with Entity.Storage in the scripts must be listed, or that value is silently dropped on save.
+  -->
+  <EntityComponents>
+    <EntityComponent xsi:type="MyObjectBuilder_ModStorageComponentDefinition">
+      <Id>
+        <TypeId>ModStorageComponent</TypeId>
+        <SubtypeId>EliteDangerousFSDSupercruise</SubtypeId>
+      </Id>
+      <RegisteredStorageGuids>
+        <!-- HyperdictorBlock.STORAGE_GUID: cooldown and capacitor charge -->
+        <guid>4A911765-7489-4D2A-885E-5CE20BBE8D71</guid>
+        <!-- WarpDrive.CAP_STORAGE_GUID: hyperspace capacitor charge -->
+        <guid>B6E1C3A2-5D47-4F0A-9C8E-2A7D1F3B6E50</guid>
+      </RegisteredStorageGuids>
+    </EntityComponent>
+  </EntityComponents>
+</Definitions>

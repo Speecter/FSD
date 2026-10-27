@@ -12,7 +12,7 @@
 Target: Hyperspace / Witchspace transit conduits only.
 Power Requirement: 20 MW
 Capacitor Charge Time: 45s
-Operational Radius: 25 km
+Operational Radius: 50 km
 Balancing Restrictions:
 1. Ship must remain completely stationary while engaged.
 2. Enters a 10-minute thermal cooling mode after successfully catching a ship.</Description>

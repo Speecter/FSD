@@ -314,6 +314,13 @@ namespace WarpDriveMod
             return false;
         }
 
+        /// <summary>The chase is still on: charging toward the jump, in the tunnel, or already landed at the follow point.
+        /// Only a chase that aborted before entering hyperspace (or emergency-dropped) lets the victim go.</summary>
+        private static bool ChaserHolding(HyperspaceSystem chaser)
+        {
+            return chaser.IsIntercepting || chaser.InterceptCommitted;
+        }
+
         private static Vector3D GridCenter(MyCubeGrid grid)
         {
             return Vector3D.Transform((Vector3D)grid.PositionComp.LocalAABB.Center, grid.WorldMatrix);
@@ -403,7 +410,7 @@ namespace WarpDriveMod
         /// Where along the victim's line the catch happens (never before the Hyperdictor ship can be ready, never after the victim
         /// would have arrived) and how many seconds from now the victim gets there.
         /// </summary>
-        private static bool ComputeCatchDistance(HyperdictionTransitPlan tp, Vector3D hdPos, double leadSeconds, out double catchDistance, out double secondsUntilCatch)
+        private static bool ComputeCatchDistance(HyperdictionTransitPlan tp, Vector3D hdPos, double fieldRadius, double leadSeconds, out double catchDistance, out double secondsUntilCatch)
         {
             catchDistance = 0.0;
             secondsUntilCatch = 0.0;
@@ -411,9 +418,9 @@ namespace WarpDriveMod
             Vector3D rel = hdPos - tp.Origin;
             double along = Vector3D.Dot(rel, tp.Direction);
             double perp2 = Math.Max(0.0, rel.LengthSquared() - along * along);
-            double radius = HyperdictorBlock.FIELD_RADIUS_METERS;
+            double radius = fieldRadius;
 
-            // Natural catch: where the line enters the 25km field, or its closest approach if it misses
+            // Natural catch: where the line enters the field (up to 25km, set by the capacitor charge), or its closest approach if it misses
             double natural = perp2 <= radius * radius ? along - Math.Sqrt(radius * radius - perp2) : along;
 
             double clock = tp.InTransit ? tp.ElapsedSeconds : 0.0;
@@ -475,7 +482,7 @@ namespace WarpDriveMod
             for (int attempt = 0; attempt < 4; attempt++)
             {
                 double catchDistance, secondsUntilCatch;
-                if (!ComputeCatchDistance(tp, hdPos, lead, out catchDistance, out secondsUntilCatch))
+                if (!ComputeCatchDistance(tp, hdPos, hd.FieldRadiusMeters, lead, out catchDistance, out secondsUntilCatch))
                     return null;
 
                 Vector3D catchPos = tp.Origin + tp.Direction * catchDistance;
@@ -565,7 +572,8 @@ namespace WarpDriveMod
 
                 bool hdOk = hd != null && hd.Block != null && !hd.Block.MarkedForClose && hd.Block.IsFunctional && hd.IsEngaged;
                 bool victimOk = victimGrid != null && !victimGrid.MarkedForClose && plan.Victim.IsTrackable;
-                bool chaserOk = !plan.Started || plan.Interceptor.IsIntercepting;
+                // A chaser that already jumped (in the tunnel or waiting at the follow point after landing early) still holds the plan
+                bool chaserOk = !plan.Started || ChaserHolding(plan.Interceptor);
 
                 if (!hdOk || !victimOk || !chaserOk)
                 {
@@ -695,7 +703,7 @@ namespace WarpDriveMod
                 CatchEvent ev = events[e];
                 HyperdictorBlock hd = ev.Hyperdictor;
                 bool hdOk = hd != null && hd.Block != null && !hd.Block.MarkedForClose && hd.Block.IsFunctional && hd.IsEngaged
-                    && (ev.Interceptor == null || ev.Interceptor.IsIntercepting);
+                    && (ev.Interceptor == null || ChaserHolding(ev.Interceptor));
 
                 for (int i = ev.Entries.Count - 1; i >= 0; i--)
                 {

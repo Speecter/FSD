@@ -116,6 +116,11 @@ namespace WarpDriveMod
                 var hs = GetHyperspace(b);
                 if (!hs.IsValid) return;
                 float powerMW = hs.GetDrivePowerMW();
+                if (hs.NotEnoughEnergy)
+                {
+                    sb.Append("Not enough energy");
+                    return;
+                }
                 double currentKm = hs.GetCurrentManualDistance(powerMW) / 1000.0;
                 double maxKm = hs.GetMaxJumpDistance(powerMW) / 1000.0;
                 sb.Append($"{currentKm:N0} km / {maxKm:N0} km ({(hs.JumpDistanceRatio * 100f):F0}%)");
@@ -290,6 +295,11 @@ namespace WarpDriveMod
                     return;
                 }
                 float powerMW = hs.GetDrivePowerMW();
+                if (hs.NotEnoughEnergy)
+                {
+                    sb.Append("Not enough energy");
+                    return;
+                }
                 double currentKm = hs.GetCurrentManualDistance(powerMW) / 1000.0;
                 double maxKm = hs.GetMaxJumpDistance(powerMW) / 1000.0;
                 sb.Append($"{currentKm:N0} km / {maxKm:N0} km ({(hs.JumpDistanceRatio * 100f):F0}%)");
@@ -589,6 +599,9 @@ namespace WarpDriveMod
             public double GetCurrentManualDistance(float power) => (hs != null) ? hs.GetCurrentManualDistance(power) : (cap != null ? cap.GetCurrentManualDistance(power) : 0);
 
             public double GetMaxJumpDistance(float power) => (hs != null) ? hs.GetMaxJumpDistance(power) : (cap != null ? cap.GetMaxJumpDistance(power) : 0);
+
+            // Capital FSDs jump for free, only the hyperspace drives need stored energy
+            public bool NotEnoughEnergy => hs != null && hs.GetAffordableDistance() < HyperspaceSystem.MIN_JUMP_DISTANCE;
         }
 
         private static bool IsWarpDrive(IMyTerminalBlock block)

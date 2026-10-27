@@ -693,7 +693,7 @@ namespace WarpDriveMod
             double memberMaxDist = hs.GetMaxJumpDistance(powerMW);
             double requiredDist = targetLobby.LeaderJumpDistance;
 
-            if (memberMaxDist < requiredDist)
+            if (memberMaxDist < requiredDist || !hs.HasEnergyForJump(requiredDist))
             {
                 MyAPIGateway.Utilities.ShowNotification($"INSUFFICIENT FSD RANGE! (Need: {requiredDist / 1000.0:N0} km, Max: {memberMaxDist / 1000.0:N0} km)", 4000, "Red");
                 return;
@@ -998,7 +998,7 @@ namespace WarpDriveMod
                         double mMaxDist = memberHs.GetMaxJumpDistance(mPower);
 
                         // Final check 1: confirm member still has power/range
-                        if (mMaxDist < lobby.LeaderJumpDistance)
+                        if (mMaxDist < lobby.LeaderJumpDistance || !memberHs.HasEnergyForJump(lobby.LeaderJumpDistance))
                         {
                             memberHs.AbortJump("FLEET JUMP ABORTED - INSUFFICIENT FSD RANGE");
                             break;

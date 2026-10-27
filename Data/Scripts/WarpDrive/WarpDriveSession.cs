@@ -42,7 +42,7 @@ namespace WarpDriveMod
         public static MySoundPair jumpOutSound = new MySoundPair("quantum_jumpout", true);
         public static MySoundPair hyperdictorCharge = new MySoundPair("Hyperdictor_charge", true);
         public static MySoundPair hyperdictorEngaged = new MySoundPair("Hyperdictor_engaged", true);
-        public static MySoundPair hyperdictorReactor = new MySoundPair("ArcBlockReactorSm", true);
+        public static MySoundPair hyperdictorReactor = new MySoundPair("Hyperdictor_reactor", true);
     }
 
     [ProtoContract]
@@ -145,6 +145,15 @@ namespace WarpDriveMod
     }
 
     [ProtoContract]
+    public class FsdCapSyncMessage
+    {
+        [ProtoMember(1)]
+        public long entityId { get; set; }
+        [ProtoMember(2)]
+        public float storedMWh { get; set; }
+    }
+
+    [ProtoContract]
     public class HyperdictionSequenceMessage
     {
         [ProtoMember(1)]
@@ -186,6 +195,7 @@ namespace WarpDriveMod
         public const ushort hyperdictorTogglePacket = 4393;
         public const ushort hyperdictorSyncPacket = 4394;
         public const ushort hyperdictionSequencePacket = 4395;
+        public const ushort fsdCapSyncPacket = 4396;
         public bool debugDraw;
         public bool debugProx = true;
         private readonly MyStringId debugRayMaterial = MyStringId.GetOrCompute("Square");
@@ -329,6 +339,7 @@ namespace WarpDriveMod
                 MyAPIGateway.Multiplayer.RegisterSecureMessageHandler(hyperdictorTogglePacket, ReceiveHyperdictorToggle);
                 MyAPIGateway.Multiplayer.RegisterSecureMessageHandler(hyperdictorSyncPacket, ReceiveHyperdictorSync);
                 MyAPIGateway.Multiplayer.RegisterSecureMessageHandler(hyperdictionSequencePacket, ReceiveHyperdictionSequence);
+                MyAPIGateway.Multiplayer.RegisterSecureMessageHandler(fsdCapSyncPacket, ReceiveFsdCapSync);
 
                 MyVisualScriptLogicProvider.PlayerLeftCockpit += PlayerLeftCockpit;
 
@@ -933,6 +944,16 @@ namespace WarpDriveMod
                 hyperdictionSession?.HandleSyncMessage(msg);
         }
 
+        private void ReceiveFsdCapSync(ushort channel, byte[] data, ulong sender, bool fromServer)
+        {
+            if (!fromServer)
+                return;
+
+            var msg = MyAPIGateway.Utilities.SerializeFromBinary<FsdCapSyncMessage>(data);
+            if (msg != null)
+                WarpDrive.Find(msg.entityId)?.ApplyCapacitorSync(msg);
+        }
+
         private void ReceiveHyperdictionSequence(ushort channel, byte[] data, ulong sender, bool fromServer)
         {
             var msg = MyAPIGateway.Utilities.SerializeFromBinary<HyperdictionSequenceMessage>(data);
@@ -958,6 +979,7 @@ namespace WarpDriveMod
                 MyAPIGateway.Multiplayer.UnregisterSecureMessageHandler(hyperdictorTogglePacket, ReceiveHyperdictorToggle);
                 MyAPIGateway.Multiplayer.UnregisterSecureMessageHandler(hyperdictorSyncPacket, ReceiveHyperdictorSync);
                 MyAPIGateway.Multiplayer.UnregisterSecureMessageHandler(hyperdictionSequencePacket, ReceiveHyperdictionSequence);
+                MyAPIGateway.Multiplayer.UnregisterSecureMessageHandler(fsdCapSyncPacket, ReceiveFsdCapSync);
 
                 hyperspaceSystems.Clear();
                 capitalFSDSystems.Clear();

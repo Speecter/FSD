@@ -5,6 +5,7 @@ using Sandbox.Game.EntityComponents;
 using Sandbox.ModAPI;
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Text;
 using VRage.Game;
 using VRage.Game.Components;
@@ -27,6 +28,26 @@ namespace WarpDriveMod
         "PrototechFSDriveSmall", "PrototechFSDriveSmall_S")]
     public class WarpDrive : MyGameLogicComponent
     {
+        public static readonly Guid CAP_STORAGE_GUID = new Guid("B6E1C3A2-5D47-4F0A-9C8E-2A7D1F3B6E50");
+        private static readonly Dictionary<long, WarpDrive> drivesById = new Dictionary<long, WarpDrive>();
+
+        public static WarpDrive Find(long entityId)
+        {
+            WarpDrive drive;
+            return drivesById.TryGetValue(entityId, out drive) ? drive : null;
+        }
+
+        /// <summary>Energy stored for hyperspace jumps (hyperspace capable drives only). Saved with the block.</summary>
+        public float CapStoredMWh { get; private set; }
+
+        private bool capLoaded;
+        private float capLastSaved = -1f;
+        private float capLastSynced = -1f;
+        private int capSyncTicks;
+        private float capDrawMW;
+        private float baseMaxRequired;
+        private long capEntityId;
+
         public IMyFunctionalBlock block { get; private set; }
         public WarpSystem warpSystem { get; private set; }
         public HyperspaceSystem hyperspace => warpSystem?.hyperspace;
@@ -115,6 +136,12 @@ namespace WarpDriveMod
 
             info?.AppendLine("Current Required Power: " + requiredPower.ToString("N") + " MW");
 
+            if (supportsHyperspace && hyperspace != null)
+            {
+                info?.AppendLine("Hyperspace Capacitor: " + CapStoredMWh.ToString("N1") + " / " + hyperspace.GetCapacitorCapacityMWh().ToString("N1") + " MWh");
+                info?.AppendLine("Capacitor Charge Power: " + capDrawMW.ToString("N1") + " MW");
+            }
+
                 float capacity, breakEvenPower;
                 warpSystem.HeatInfo(this, out capacity, out breakEvenPower);
 
@@ -132,6 +159,8 @@ namespace WarpDriveMod
                 return;
 
             WarpDriveSession.instance.InitJumpControl();
+
+            UpdateCapacitor();
 
             if (!MyAPIGateway.Utilities.IsDedicated)
                 block.RefreshCustomInfo();
@@ -181,6 +210,10 @@ namespace WarpDriveMod
 
         public override void Close()
         {
+            SaveCapacitorStorage();
+            if (capEntityId != 0)
+                drivesById.Remove(capEntityId);
+
             if (!MyAPIGateway.Utilities.IsDedicated && block != null)
                 block.AppendingCustomInfo -= Block_AppendingCustomInfo;
 
@@ -198,9 +231,11 @@ namespace WarpDriveMod
 
             powerMultiplier = WarpSystem.IsPrototech(this) ? 0.5f : 1f;
 
+            baseMaxRequired = (float)((WarpSystem.IsSmallDrive(this) ? settings.baseRequiredPowerSmall : settings.baseRequiredPower) * settings.powerRequirementMultiplier * powerMultiplier);
+
             sink = new MyResourceSinkComponent();
             sink.Init(MyStringHash.GetOrCompute("Utility"),
-                (float)((WarpSystem.IsSmallDrive(this) ? settings.baseRequiredPowerSmall : settings.baseRequiredPower) * settings.powerRequirementMultiplier * powerMultiplier),
+                baseMaxRequired,
                 ComputeRequiredPower, (MyCubeBlock)Entity);
 
             Entity.Components.Add(sink);
@@ -212,7 +247,143 @@ namespace WarpDriveMod
             if (warpSystem == null || warpSystem.warpState == WarpSystem.State.idle)
                 requiredPower = 0;
 
-            return requiredPower;
+            return requiredPower + capDrawMW;
+        }
+
+        private static bool IsAuthority => !MyAPIGateway.Multiplayer.MultiplayerActive || MyAPIGateway.Multiplayer.IsServer;
+
+        // ---- Hyperspace capacitor: filled from ship power while the drive is idle, spent by hyperspace jumps ----
+
+        private void UpdateCapacitor()
+        {
+            if (!capLoaded)
+                LoadCapacitorStorage();
+
+            var hs = hyperspace;
+            if (!supportsHyperspace || hs == null)
+            {
+                SetCapacitorDraw(0f);
+                return;
+            }
+
+            float capacity = (float)hs.GetCapacitorCapacityMWh();
+
+            // A power reading of 0 (a blip, a grid split, supercruise cutting power for a moment) gives a capacity of 0.
+            // Only trust the capacity for clamping when it is valid and nothing is in progress, so stored energy is never wiped by it
+            if (capacity > 0f && CapStoredMWh > capacity && hs.State == HyperspaceSystem.HyperState.Idle
+                && warpSystem != null && warpSystem.warpState == WarpSystem.State.idle)
+                CapStoredMWh = capacity;
+
+            bool canCharge = block.IsFunctional && block.Enabled && hs.State == HyperspaceSystem.HyperState.Idle
+                && warpSystem != null && warpSystem.warpState == WarpSystem.State.idle && CapStoredMWh < capacity - 0.0001f;
+
+            SetCapacitorDraw(canCharge ? (float)hs.GetCapacitorChargePowerMW(capacity) : 0f);
+
+            if (IsAuthority)
+            {
+                if (canCharge)
+                {
+                    float inputMW = sink.CurrentInputByType(MyResourceDistributorComponent.ElectricityId);
+                    float dtHours = 10f / 60f / 3600f;
+                    CapStoredMWh = Math.Min(capacity, CapStoredMWh + Math.Min(inputMW, capDrawMW) * dtHours);
+                }
+
+                SaveCapacitorStorage();
+            }
+
+            capSyncTicks += 10;
+            if (capSyncTicks >= 60)
+            {
+                capSyncTicks = 0;
+                SyncCapacitor(false);
+            }
+        }
+
+        private void SetCapacitorDraw(float mw)
+        {
+            if (Math.Abs(mw - capDrawMW) < 0.01f)
+                return;
+
+            capDrawMW = mw;
+            sink.SetMaxRequiredInputByType(MyResourceDistributorComponent.ElectricityId, Math.Max(baseMaxRequired, capDrawMW + requiredPower));
+            sink.Update();
+        }
+
+        /// <summary>Spends stored energy on a jump (server / single player only).</summary>
+        public bool TryDrainCapacitor(float mwh)
+        {
+            if (!IsAuthority)
+                return true;
+            if (mwh <= 0f)
+                return true;
+            if (CapStoredMWh + 0.0001f < mwh)
+                return false;
+
+            CapStoredMWh = Math.Max(0f, CapStoredMWh - mwh);
+            SaveCapacitorStorage();
+            SyncCapacitor(true);
+            return true;
+        }
+
+        private void SyncCapacitor(bool force)
+        {
+            if (!MyAPIGateway.Multiplayer.MultiplayerActive || !MyAPIGateway.Multiplayer.IsServer || !supportsHyperspace)
+                return;
+            if (!force && Math.Abs(CapStoredMWh - capLastSynced) < 0.0005f)
+                return;
+
+            capLastSynced = CapStoredMWh;
+            var msg = new FsdCapSyncMessage { entityId = block.EntityId, storedMWh = CapStoredMWh };
+            MyAPIGateway.Multiplayer.SendMessageToOthers(WarpDriveSession.fsdCapSyncPacket, MyAPIGateway.Utilities.SerializeToBinary(msg));
+        }
+
+        public void ApplyCapacitorSync(FsdCapSyncMessage msg)
+        {
+            if (msg != null)
+                CapStoredMWh = Math.Max(0f, msg.storedMWh);
+        }
+
+        // Loaded on the first update, once the block is in the scene, so existing storage is never replaced by an empty one
+        private void LoadCapacitorStorage()
+        {
+            capLoaded = true;
+            capEntityId = block.EntityId;
+            drivesById[capEntityId] = this;
+
+            try
+            {
+                string val;
+                float stored;
+                if (Entity.Storage != null && Entity.Storage.TryGetValue(CAP_STORAGE_GUID, out val) && !string.IsNullOrEmpty(val)
+                    && float.TryParse(val, NumberStyles.Float, CultureInfo.InvariantCulture, out stored))
+                    CapStoredMWh = Math.Max(0f, stored);
+
+                capLastSaved = CapStoredMWh;
+            }
+            catch (Exception ex)
+            {
+                MyLog.Default.WriteLineAndConsole($"[WarpDrive] Error loading capacitor storage: {ex.Message}");
+            }
+        }
+
+        // Written whenever the value changes so a world save always sees the current charge
+        private void SaveCapacitorStorage()
+        {
+            if (!capLoaded || !supportsHyperspace || Math.Abs(CapStoredMWh - capLastSaved) < 0.00001f)
+                return;
+
+            try
+            {
+                if (Entity.Storage == null)
+                    Entity.Storage = new MyModStorageComponent();
+
+                Entity.Storage.SetValue(CAP_STORAGE_GUID, CapStoredMWh.ToString("R", CultureInfo.InvariantCulture));
+                capLastSaved = CapStoredMWh;
+            }
+            catch (Exception ex)
+            {
+                MyLog.Default.WriteLineAndConsole($"[WarpDrive] Error saving capacitor storage: {ex.Message}");
+            }
         }
 
         public static IMyEntity ProximityDanger(MatrixD gridMatrix, GridSystem gridSystem, double gridSpeed, bool spooling = false)
