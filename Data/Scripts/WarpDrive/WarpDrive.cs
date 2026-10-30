@@ -250,7 +250,7 @@ namespace WarpDriveMod
             return requiredPower + capDrawMW;
         }
 
-        private static bool IsAuthority => !MyAPIGateway.Multiplayer.MultiplayerActive || MyAPIGateway.Multiplayer.IsServer;
+        private static bool IsAuthority => NetAuthority.IsAuthority;
 
         // ---- Hyperspace capacitor: filled from ship power while the drive is idle, spent by hyperspace jumps ----
 
@@ -507,66 +507,78 @@ namespace WarpDriveMod
                 if (!(ent is MyVoxelMap))
                     return ent;
 
-                IMyVoxelBase asteroid = (IMyVoxelBase)ent;
-                double widestSide = Math.Max(pathWidth, pathHeight);
-                int coarseLod = Math.Max(3, Math.Min(5, (int)Math.Ceiling(Math.Log(widestSide / 4, 2))));
-                int fineLod = coarseLod - 3;
-                double coarseSize = 1 << coarseLod;
-                double fineSize = 1 << fineLod;
-                Vector3D storageOrigin = asteroid.PositionLeftBottomCorner;
-                Vector3I coarseLimit = (asteroid.Storage.Size >> coarseLod) - 1;
-                int segments = (int)Math.Ceiling(path.Length / (2 * widestSide));
-                double segmentLength = path.Length / segments;
-                Vector3D segmentExtent = Vector3D.Abs(gridMatrix.Right * pathWidth) + Vector3D.Abs(gridMatrix.Up * pathHeight) + Vector3D.Abs(forward * (segmentLength / 2));
+                if (VoxelPathBlocked((IMyVoxelBase)ent, ref pathBox, path, gridMatrix, pathWidth, pathHeight))
+                    return ent;
+            }
 
-                for (int segment = 0; segment < segments; segment++)
+            return null;
+        }
+
+        /// <summary>
+        /// True when rock of the asteroid lies inside the oriented path box. Reads the voxel storage at a coarse level of detail first
+        /// and only refines the cells that are partly filled, so it costs a few storage reads instead of a mesh raycast per ray.
+        /// </summary>
+        public static bool VoxelPathBlocked(IMyVoxelBase asteroid, ref MyOrientedBoundingBoxD pathBox, LineD path, MatrixD gridMatrix, double pathWidth, double pathHeight)
+        {
+            Vector3D forward = gridMatrix.Forward;
+            double widestSide = Math.Max(pathWidth, pathHeight);
+            int coarseLod = Math.Max(3, Math.Min(5, (int)Math.Ceiling(Math.Log(widestSide / 4, 2))));
+            int fineLod = coarseLod - 3;
+            double coarseSize = 1 << coarseLod;
+            double fineSize = 1 << fineLod;
+            Vector3D storageOrigin = asteroid.PositionLeftBottomCorner;
+            Vector3I coarseLimit = (asteroid.Storage.Size >> coarseLod) - 1;
+            int segments = (int)Math.Ceiling(path.Length / (2 * widestSide));
+            double segmentLength = path.Length / segments;
+            Vector3D segmentExtent = Vector3D.Abs(gridMatrix.Right * pathWidth) + Vector3D.Abs(gridMatrix.Up * pathHeight) + Vector3D.Abs(forward * (segmentLength / 2));
+
+            for (int segment = 0; segment < segments; segment++)
+            {
+                Vector3D segmentCenter = path.From + forward * (segmentLength * (segment + 0.5));
+                Vector3I coarseMin = Vector3I.Max(Vector3I.Floor((segmentCenter - segmentExtent - storageOrigin) / coarseSize), Vector3I.Zero);
+                Vector3I coarseMax = Vector3I.Min(Vector3I.Floor((segmentCenter + segmentExtent - storageOrigin) / coarseSize), coarseLimit);
+                if (coarseMin.X > coarseMax.X || coarseMin.Y > coarseMax.Y || coarseMin.Z > coarseMax.Z)
+                    continue;
+
+                coarseRock.Resize(coarseMin, coarseMax);
+                asteroid.Storage.ReadRange(coarseRock, MyStorageDataTypeFlags.Content, coarseLod, coarseMin, coarseMax);
+
+                for (int z = 0; z <= coarseMax.Z - coarseMin.Z; z++)
                 {
-                    Vector3D segmentCenter = path.From + forward * (segmentLength * (segment + 0.5));
-                    Vector3I coarseMin = Vector3I.Max(Vector3I.Floor((segmentCenter - segmentExtent - storageOrigin) / coarseSize), Vector3I.Zero);
-                    Vector3I coarseMax = Vector3I.Min(Vector3I.Floor((segmentCenter + segmentExtent - storageOrigin) / coarseSize), coarseLimit);
-                    if (coarseMin.X > coarseMax.X || coarseMin.Y > coarseMax.Y || coarseMin.Z > coarseMax.Z)
-                        continue;
-
-                    coarseRock.Resize(coarseMin, coarseMax);
-                    asteroid.Storage.ReadRange(coarseRock, MyStorageDataTypeFlags.Content, coarseLod, coarseMin, coarseMax);
-
-                    for (int z = 0; z <= coarseMax.Z - coarseMin.Z; z++)
+                    for (int y = 0; y <= coarseMax.Y - coarseMin.Y; y++)
                     {
-                        for (int y = 0; y <= coarseMax.Y - coarseMin.Y; y++)
+                        for (int x = 0; x <= coarseMax.X - coarseMin.X; x++)
                         {
-                            for (int x = 0; x <= coarseMax.X - coarseMin.X; x++)
+                            byte content = coarseRock.Content(x, y, z);
+                            if (content == 0)
+                                continue;
+
+                            Vector3I coarseCell = coarseMin + new Vector3I(x, y, z);
+                            Vector3D cellMin = storageOrigin + coarseCell * coarseSize;
+                            var cellBox = new BoundingBoxD(cellMin, cellMin + coarseSize);
+                            if (!pathBox.Intersects(ref cellBox))
+                                continue;
+
+                            if (content == byte.MaxValue)
+                                return true;
+
+                            Vector3I fineMin = coarseCell * 8;
+                            Vector3I fineMax = fineMin + 7;
+                            fineRock.Resize(fineMin, fineMax);
+                            asteroid.Storage.ReadRange(fineRock, MyStorageDataTypeFlags.Content, fineLod, fineMin, fineMax);
+
+                            for (int fz = 0; fz < 8; fz++)
                             {
-                                byte content = coarseRock.Content(x, y, z);
-                                if (content == 0)
-                                    continue;
-
-                                Vector3I coarseCell = coarseMin + new Vector3I(x, y, z);
-                                Vector3D cellMin = storageOrigin + coarseCell * coarseSize;
-                                var cellBox = new BoundingBoxD(cellMin, cellMin + coarseSize);
-                                if (!pathBox.Intersects(ref cellBox))
-                                    continue;
-
-                                if (content == byte.MaxValue)
-                                    return ent;
-
-                                Vector3I fineMin = coarseCell * 8;
-                                Vector3I fineMax = fineMin + 7;
-                                fineRock.Resize(fineMin, fineMax);
-                                asteroid.Storage.ReadRange(fineRock, MyStorageDataTypeFlags.Content, fineLod, fineMin, fineMax);
-
-                                for (int fz = 0; fz < 8; fz++)
+                                for (int fy = 0; fy < 8; fy++)
                                 {
-                                    for (int fy = 0; fy < 8; fy++)
+                                    for (int fx = 0; fx < 8; fx++)
                                     {
-                                        for (int fx = 0; fx < 8; fx++)
-                                        {
-                                            if (fineRock.Content(fx, fy, fz) <= 127)
-                                                continue;
+                                        if (fineRock.Content(fx, fy, fz) <= 127)
+                                            continue;
 
-                                            Vector3D rockPoint = storageOrigin + (fineMin + new Vector3I(fx, fy, fz)) * fineSize + fineSize / 2;
-                                            if (pathBox.Contains(ref rockPoint))
-                                                return ent;
-                                        }
+                                        Vector3D rockPoint = storageOrigin + (fineMin + new Vector3I(fx, fy, fz)) * fineSize + fineSize / 2;
+                                        if (pathBox.Contains(ref rockPoint))
+                                            return true;
                                     }
                                 }
                             }
@@ -575,7 +587,7 @@ namespace WarpDriveMod
                 }
             }
 
-            return null;
+            return false;
         }
 
         public static bool EnemyProximityCharge(IMyCubeGrid warpGrid)
@@ -627,6 +639,18 @@ namespace WarpDriveMod
             if (candidateGrid == null || candidateGrid.MarkedForClose)
                 return true;
 
+            // Fleet whitelist: Ignore Leader, Wingmen, and all their subgrids.
+            // Dictionary lookups only, so it goes first: every ship of a fleet scans its wingmen and the checks below are far costlier
+            if (myFleetLeader != 0L)
+            {
+                if (candidateGrid.EntityId == myFleetLeader || FleetJumpSystem.GetLeaderIdForGrid(candidateGrid.EntityId) == myFleetLeader || FleetJumpSystem.IsSameFleet(myGrid?.EntityId ?? 0L, candidateGrid.EntityId, myFleetLeader))
+                    return true;
+
+                var topFleetCandidate = candidateGrid.GetTopMostParent();
+                if (topFleetCandidate != null && (topFleetCandidate.EntityId == myFleetLeader || FleetJumpSystem.GetLeaderIdForGrid(topFleetCandidate.EntityId) == myFleetLeader || FleetJumpSystem.IsSameFleet(myGrid?.EntityId ?? 0L, topFleetCandidate.EntityId, myFleetLeader)))
+                    return true;
+            }
+
             // Ignore unphysical, preview, or empty dummy grids (e.g. projections, mod placeholders)
             if (candidateGrid.Physics == null || !candidateGrid.Physics.Enabled)
                 return true;
@@ -660,17 +684,6 @@ namespace WarpDriveMod
                 {
                     return true;
                 }
-            }
-
-            // Fleet whitelist: Ignore Leader, Wingmen, and all their subgrids
-            if (myFleetLeader != 0L)
-            {
-                if (candidateGrid.EntityId == myFleetLeader || FleetJumpSystem.GetLeaderIdForGrid(candidateGrid.EntityId) == myFleetLeader || FleetJumpSystem.IsSameFleet(myGrid?.EntityId ?? 0L, candidateGrid.EntityId, myFleetLeader))
-                    return true;
-
-                var topCandidate = candidateGrid.GetTopMostParent();
-                if (topCandidate != null && (topCandidate.EntityId == myFleetLeader || FleetJumpSystem.GetLeaderIdForGrid(topCandidate.EntityId) == myFleetLeader || FleetJumpSystem.IsSameFleet(myGrid?.EntityId ?? 0L, topCandidate.EntityId, myFleetLeader)))
-                    return true;
             }
 
             return false;

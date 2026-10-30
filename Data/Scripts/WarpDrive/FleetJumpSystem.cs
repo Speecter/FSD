@@ -22,7 +22,8 @@ namespace WarpDriveMod
         [ProtoEnum] Leave,
         [ProtoEnum] ExecuteJump,
         [ProtoEnum] CancelLobby,
-        [ProtoEnum] SyncLobbyState
+        [ProtoEnum] SyncLobbyState,
+        [ProtoEnum] UpdateTarget        // leader changed the destination or the blind-jump range
     }
 
     [ProtoContract]
@@ -83,7 +84,8 @@ namespace WarpDriveMod
         public float JumpDistanceRatio;
         public Vector3D? TargetGpsCoords;
         public string TargetGpsName;
-        public double LeaderJumpDistance;
+        public double LeaderJumpDistance;       // the fleet's distance: the leader's, after it cleared the way of obstacles. Wingmen fly exactly this
+        public double FormationRadius;          // how far the wingmen are from the leader when the fleet engages; the leader clears this much extra lane width
         public List<FleetMemberInfo> Members = new List<FleetMemberInfo>();
         public HashSet<long> InTransitGridIds = new HashSet<long>();
         public bool IsExecuting = false;
@@ -165,6 +167,12 @@ namespace WarpDriveMod
             return null;
         }
 
+        public static FleetJumpLobby GetLobbyByLeader(long leaderGridId)
+        {
+            FleetJumpLobby lobby;
+            return _activeLobbies.TryGetValue(leaderGridId, out lobby) ? lobby : null;
+        }
+
         public static bool IsJumpLeader(long gridId)
         {
             return _activeLobbies.ContainsKey(gridId);
@@ -204,13 +212,13 @@ namespace WarpDriveMod
             var drive = HyperspaceControls.GetWarpDrive(block);
             if (drive == null || drive.hyperspace == null)
             {
-                MyAPIGateway.Utilities.ShowNotification("No Frame Shift Drive found on ship!", 3000, "Red");
+                HudEvents.PostLocal("No Frame Shift Drive found on ship!", 3000, "Red");
                 return;
             }
 
             if (!drive.supportsHyperspace)
             {
-                MyAPIGateway.Utilities.ShowNotification("This FSD does not support Hyperspace jumps! (Supercruise Only)", 3000, "Red");
+                HudEvents.PostLocal("This FSD does not support Hyperspace jumps! (Supercruise Only)", 3000, "Red");
                 return;
             }
 
@@ -228,19 +236,23 @@ namespace WarpDriveMod
                     // Cleanly unregister this ship so it can immediately create or join a new fleet jump.
                     UnregisterFleetGrid(mainGrid.EntityId);
                 }
+                else if (existingLobby != null && !MyAPIGateway.Utilities.IsDedicated && FsdHud.IsReady)
+                {
+                    // In a fleet: the button opens / closes the lobby menu (destination, members, engage, disband or leave)
+                    FsdHud.ToggleFleetMenu(existingLobby, mainGrid.EntityId);
+                    return;
+                }
                 else if (IsJumpLeader(mainGrid.EntityId))
                 {
                     if (existingLobby != null && !existingLobby.IsExecuting && !MyAPIGateway.Utilities.IsDedicated)
-                    {
-                        OpenJumpLeaderDialog(existingLobby);
-                    }
+                        TryEngageFleetJump(existingLobby);
                     return;
                 }
                 else
                 {
                     // Member -> Leave / Quit fleet jump
                     CancelFleetJump(mainGrid.EntityId, playerId);
-                    MyAPIGateway.Utilities.ShowNotification("Left Fleet Jump formation.", 3000, "White");
+                    HudEvents.PostLocal("Left Fleet Jump formation.", 3000, "White");
                     return;
                 }
             }
@@ -249,12 +261,13 @@ namespace WarpDriveMod
             // 0. Supercruise conflict check
             if (drive.warpSystem != null && drive.warpSystem.warpState != WarpSystem.State.idle)
             {
-                drive.warpSystem.SendMessage("Another seat is piloting this grid", 3f, "Red", playerId);
+                HudEvents.PostLocal("Another seat is piloting this grid", 3000, "Red");
                 return;
             }
 
             // Safety & Power pre-check
-            if (!hs.CanInitiateJump(playerId)) return;
+            // The fleet aligns while holding, so creating the lobby does not require the leader to be aligned yet
+            if (!hs.CanInitiateJump(playerId, false)) return;
 
             long leaderOwnerId = (mainGrid.BigOwners != null && mainGrid.BigOwners.Count > 0) ? mainGrid.BigOwners[0] : playerId;
             long factionId = GetGridFactionId(mainGrid);
@@ -336,10 +349,13 @@ namespace WarpDriveMod
             // Perform single scan for friendly ships within 5km and send invitations
             ScanAndInviteFriendlyShips(lobby);
 
-            // Open Jump Leader confirmation popup window on leader's client
+            // The lobby panel appears on the leader's HUD; engaging is a second press of the Fleet Jump button
             if (!MyAPIGateway.Utilities.IsDedicated && playerId == (MyAPIGateway.Session?.Player?.IdentityId ?? -1))
             {
-                OpenJumpLeaderDialog(lobby);
+                if (FsdHud.IsReady)
+                    FsdHud.ToggleFleetMenu(lobby, mainGrid.EntityId);
+                else
+                    HudEvents.PostLocal("FLEET LOBBY OPEN - PRESS FLEET JUMP AGAIN TO ENGAGE", 6000, "White");
             }
         }
 
@@ -348,13 +364,13 @@ namespace WarpDriveMod
             var drive = HyperspaceControls.GetWarpDrive(block);
             if (drive == null || drive.hyperspace == null)
             {
-                MyAPIGateway.Utilities.ShowNotification("No Frame Shift Drive found on ship!", 3000, "Red");
+                HudEvents.PostLocal("No Frame Shift Drive found on ship!", 3000, "Red");
                 return;
             }
 
             if (!drive.supportsHyperspace)
             {
-                MyAPIGateway.Utilities.ShowNotification("This FSD does not support Hyperspace jumps!", 3000, "Red");
+                HudEvents.PostLocal("This FSD does not support Hyperspace jumps!", 3000, "Red");
                 return;
             }
 
@@ -364,7 +380,7 @@ namespace WarpDriveMod
 
             if (IsGridInFleet(mainGrid.EntityId))
             {
-                MyAPIGateway.Utilities.ShowNotification("Already in a Fleet Jump formation.", 3000, "Red");
+                HudEvents.PostLocal("Already in a Fleet Jump formation.", 3000, "Red");
                 return;
             }
 
@@ -375,7 +391,7 @@ namespace WarpDriveMod
             }
             else
             {
-                MyAPIGateway.Utilities.ShowNotification("No friendly Fleet Jump lobby found nearby.", 3000, "Red");
+                HudEvents.PostLocal("No friendly Fleet Jump lobby found nearby.", 3000, "Red");
             }
         }
 
@@ -502,8 +518,7 @@ namespace WarpDriveMod
 
                     if (hasSeatedPilot || hasActiveRemotePilot)
                     {
-                        // Send Invitation notification to players on this grid
-                        NotifyGridOfFleetInvite(grid, lobby);
+                        // Nothing to do here: every machine receives the lobby message and shows the invitation to its own pilot (NotifyLocalPlayerOfInvite)
                     }
                     else if (hasWorkingRemoteControl)
                     {
@@ -514,111 +529,118 @@ namespace WarpDriveMod
             }
         }
 
-        // Shows the Jump Leader confirmation dialog (matching vanilla jump drive UX)
-        public static void OpenJumpLeaderDialog(FleetJumpLobby lobby)
+        /// <summary>
+        /// Leader changes the fleet's destination (GPS or blind with a range ratio). Applied here and sent to every machine;
+        /// ships keep their charge and simply re-aim.
+        /// </summary>
+        public static void SetFleetTarget(FleetJumpLobby lobby, HyperspaceSystem.JumpMode mode, Vector3D? gpsCoords, string gpsName, float rangeRatio, long playerId)
         {
-            if (lobby == null || lobby.IsExecuting) return;
+            if (lobby == null || lobby.IsExecuting)
+                return;
 
-            string targetInfo = (lobby.Mode == HyperspaceSystem.JumpMode.GpsWaypoint && !string.IsNullOrEmpty(lobby.TargetGpsName))
-                ? $"Target Waypoint: {lobby.TargetGpsName}"
-                : $"Manual Distance: {(lobby.JumpDistanceRatio * 100f):F0}% range ({(lobby.LeaderJumpDistance / 1000.0):N0} km)";
-
-            StringBuilder sb = new StringBuilder();
-            sb.AppendLine("FLEET HYPERSPACE COORDINATION");
-            sb.AppendLine("----------------------------------------");
-            sb.AppendLine(targetInfo);
-            sb.AppendLine($"Fleet Sector Range: {FLEET_SCAN_RADIUS / 1000.0:F0} km");
-            sb.AppendLine();
-            sb.AppendLine($"Joined Fleet Ships ({lobby.Members.Count}):");
-            for (int i = 0; i < lobby.Members.Count; i++)
+            rangeRatio = MathHelper.Clamp(rangeRatio, 0f, 1f);
+            var leaderHs = FindHyperspace(lobby.LeaderGridId);
+            var leaderGrid = MyEntities.GetEntityById(lobby.LeaderGridId) as MyCubeGrid;
+            double distance = lobby.LeaderJumpDistance;
+            if (leaderHs != null && leaderGrid != null)
             {
-                var m = lobby.Members[i];
-                string role = (i == 0) ? "[LEADER]" : $"[WING {i}]";
-                double offset = GetMemberAlignmentOffset(m.GridEntityId, lobby);
-                
-                var memberGrid = MyEntities.GetEntityById(m.GridEntityId) as MyCubeGrid;
-                HyperspaceSystem memberHs = null;
-                if (memberGrid != null)
+                if (mode == HyperspaceSystem.JumpMode.GpsWaypoint && gpsCoords.HasValue)
                 {
-                    foreach (var fat in memberGrid.GetFatBlocks())
-                    {
-                        var drive = fat?.GameLogic?.GetAs<WarpDrive>();
-                        if (drive?.hyperspace != null)
-                        {
-                            memberHs = drive.hyperspace;
-                            break;
-                        }
-                    }
-                }
-
-                string alignStatus;
-                if (memberHs != null && memberHs.State == HyperspaceSystem.HyperState.Cooldown)
-                {
-                    alignStatus = "[COOLING DOWN]";
-                }
-                else if (offset <= HyperspaceSystem.ALIGNMENT_TOLERANCE_DEG)
-                {
-                    alignStatus = "[READY]";
+                    distance = Vector3D.Distance(leaderGrid.PositionComp.GetPosition(), gpsCoords.Value);
                 }
                 else
                 {
-                    alignStatus = $"[ALIGNING: {offset:F1}°]";
+                    leaderHs.JumpDistanceRatio = rangeRatio;
+                    distance = leaderHs.GetCurrentManualDistance(leaderHs.GetDrivePowerMW());
+                }
+            }
+
+            ApplyFleetTarget(lobby, mode, gpsCoords, gpsName, rangeRatio, distance);
+
+            SendFleetMessage(new FleetJumpMessage
+            {
+                Action = FleetActionType.UpdateTarget,
+                LeaderGridId = lobby.LeaderGridId,
+                SendingPlayerId = playerId,
+                Mode = (int)mode,
+                JumpDistanceRatio = rangeRatio,
+                HasGpsCoords = gpsCoords.HasValue,
+                GpsCoords = gpsCoords ?? Vector3D.Zero,
+                GpsName = gpsName ?? string.Empty,
+                LeaderJumpDistance = distance
+            });
+        }
+
+        private static void ApplyFleetTarget(FleetJumpLobby lobby, HyperspaceSystem.JumpMode mode, Vector3D? gpsCoords, string gpsName, float rangeRatio, double leaderDistance)
+        {
+            bool gps = mode == HyperspaceSystem.JumpMode.GpsWaypoint && gpsCoords.HasValue;
+            lobby.Mode = gps ? HyperspaceSystem.JumpMode.GpsWaypoint : HyperspaceSystem.JumpMode.ManualDistance;
+            lobby.TargetGpsCoords = gps ? gpsCoords : null;
+            lobby.TargetGpsName = gps ? gpsName : string.Empty;
+            lobby.JumpDistanceRatio = rangeRatio;
+            lobby.LeaderJumpDistance = leaderDistance;
+
+            foreach (var member in lobby.Members)
+            {
+                var hs = FindHyperspace(member.GridEntityId);
+                if (hs == null)
+                    continue;
+
+                hs.Mode = lobby.Mode;
+                hs.JumpDistanceRatio = rangeRatio;
+                hs.SelectedGpsCoords = lobby.TargetGpsCoords;
+                hs.SelectedGpsName = lobby.TargetGpsName;
+                hs.RetargetFleetHold();
+            }
+        }
+
+        /// <summary>The hyperspace system of a fleet ship (null if it has none or is not loaded).</summary>
+        public static HyperspaceSystem FindHyperspace(long gridId)
+        {
+            var grid = MyEntities.GetEntityById(gridId) as MyCubeGrid;
+            if (grid == null)
+                return null;
+
+            foreach (var fat in grid.GetFatBlocks())
+            {
+                var drive = fat?.GameLogic?.GetAs<WarpDrive>();
+                if (drive?.hyperspace != null)
+                    return drive.hyperspace;
+            }
+            return null;
+        }
+
+        /// <summary>Leader pressed Fleet Jump while the lobby is open: engage if every ship is cooled down and aligned.</summary>
+        public static bool TryEngageFleetJump(FleetJumpLobby lobby)
+        {
+            if (lobby == null || lobby.IsExecuting)
+                return false;
+
+            for (int i = 0; i < lobby.Members.Count; i++)
+            {
+                var m = lobby.Members[i];
+                var memberHs = FindHyperspace(m.GridEntityId);
+                if (memberHs != null && memberHs.State == HyperspaceSystem.HyperState.Cooldown)
+                {
+                    HudEvents.PostLocal($"Cannot jump: {m.GridName}'s FSD is still cooling down!", 4000, "Red");
+                    return false;
                 }
 
-                sb.AppendLine($" {role} {m.GridName} - {alignStatus}");
-            }
-            sb.AppendLine();
-            sb.AppendLine("Instructions:");
-            sb.AppendLine(" • Click 'ENGAGE FLEET JUMP' when all ships are aligned [READY].");
-            sb.AppendLine(" • Click 'X' / Esc to minimize window (reopen via 'Fleet Jump' button).");
-            sb.AppendLine(" • Trigger standard 'Hyperspace Jump' (solo jump) to abort/cancel fleet jump.");
-
-            MyAPIGateway.Utilities.ShowMissionScreen(
-                "FLEET HYPERSPACE JUMP - JUMP LEADER",
-                "CONFIRM FLEET JUMP",
-                $"{lobby.Members.Count} SHIP(S) IN FORMATION",
-                sb.ToString(),
-                (result) =>
+                double offset = GetMemberAlignmentOffset(m.GridEntityId, lobby);
+                if (offset > HyperspaceSystem.ALIGNMENT_TOLERANCE_DEG)
                 {
-                    if (result == ResultEnum.OK)
+                    // An unmanned drone that isn't aligned is left behind when the fleet engages; only the leader and crewed ships hold it up
+                    bool leftBehind = i > 0 && memberHs != null && !memberHs.HasHumanPilot();
+                    if (!leftBehind)
                     {
-                        // Verify all members are cooled down and within 5.0 deg alignment tolerance before executing
-                        for (int i = 0; i < lobby.Members.Count; i++)
-                        {
-                            var m = lobby.Members[i];
-                            var mGrid = MyEntities.GetEntityById(m.GridEntityId) as MyCubeGrid;
-                            if (mGrid != null)
-                            {
-                                foreach (var fat in mGrid.GetFatBlocks())
-                                {
-                                    var drive = fat?.GameLogic?.GetAs<WarpDrive>();
-                                    if (drive?.hyperspace != null && drive.hyperspace.State == HyperspaceSystem.HyperState.Cooldown)
-                                    {
-                                        MyAPIGateway.Utilities.ShowNotification($"Cannot jump: {m.GridName}'s FSD is still cooling down!", 4000, "Red");
-                                        return;
-                                    }
-                                }
-                            }
-
-                            double offset = GetMemberAlignmentOffset(m.GridEntityId, lobby);
-                            if (offset > HyperspaceSystem.ALIGNMENT_TOLERANCE_DEG)
-                            {
-                                MyAPIGateway.Utilities.ShowNotification($"Cannot jump: {m.GridName} is not aligned (Offset: {offset:F1}°, Max {HyperspaceSystem.ALIGNMENT_TOLERANCE_DEG:F1}°)", 4000, "Red");
-                                return;
-                            }
-                        }
-
-                        // Ok clicked and all ships aligned -> execute jump
-                        ConfirmAndExecuteFleetJump(lobby.LeaderGridId, lobby.LeaderPlayerId);
+                        HudEvents.PostLocal($"Cannot jump: {m.GridName} is not aligned (Offset: {offset:F1}°, Max {HyperspaceSystem.ALIGNMENT_TOLERANCE_DEG:F1}°)", 4000, "Red");
+                        return false;
                     }
-                    else
-                    {
-                        // Closed / cancelled / escape -> keep fleet lobby active in holding charge!
-                        MyAPIGateway.Utilities.ShowNotification("Fleet Jump window minimized. Press 'Fleet Jump' to reopen.", 3000, "White");
-                    }
-                },
-                "ENGAGE FLEET JUMP"
-            );
+                }
+            }
+
+            ConfirmAndExecuteFleetJump(lobby.LeaderGridId, lobby.LeaderPlayerId);
+            return true;
         }
 
         // Joins a friendly ship into an existing fleet jump
@@ -627,7 +649,7 @@ namespace WarpDriveMod
             if (memberGrid == null) return;
             if (IsGridInFleet(memberGrid.EntityId)) return;
 
-            // Find nearest active friendly lobby within 10km
+            // Find nearest active friendly lobby within the fleet sector (5 km)
             FleetJumpLobby targetLobby = null;
             double nearestDist = FLEET_SCAN_RADIUS;
 
@@ -653,7 +675,7 @@ namespace WarpDriveMod
 
             if (targetLobby == null)
             {
-                MyAPIGateway.Utilities.ShowNotification("No active Fleet Jump invitation within 5 km.", 3000, "Red");
+                HudEvents.PostLocal("No active Fleet Jump invitation within 5 km.", 3000, "Red");
                 return;
             }
 
@@ -670,13 +692,13 @@ namespace WarpDriveMod
 
             if (warpDrive == null || warpDrive.hyperspace == null)
             {
-                MyAPIGateway.Utilities.ShowNotification("No Frame Shift Drive on ship!", 3000, "Red");
+                HudEvents.PostLocal("No Frame Shift Drive on ship!", 3000, "Red");
                 return;
             }
 
             if (!warpDrive.supportsHyperspace)
             {
-                MyAPIGateway.Utilities.ShowNotification("Your FSD does not support Hyperspace jumps! (Supercruise Only)", 3000, "Red");
+                HudEvents.PostLocal("Your FSD does not support Hyperspace jumps! (Supercruise Only)", 3000, "Red");
                 return;
             }
 
@@ -684,7 +706,7 @@ namespace WarpDriveMod
 
             if (hs.State == HyperspaceSystem.HyperState.Cooldown)
             {
-                MyAPIGateway.Utilities.ShowNotification("FSD is cooling down from previous jump!", 3000, "Red");
+                HudEvents.PostLocal("FSD is cooling down from previous jump!", 3000, "Red");
                 return;
             }
 
@@ -695,7 +717,7 @@ namespace WarpDriveMod
 
             if (memberMaxDist < requiredDist || !hs.HasEnergyForJump(requiredDist))
             {
-                MyAPIGateway.Utilities.ShowNotification($"INSUFFICIENT FSD RANGE! (Need: {requiredDist / 1000.0:N0} km, Max: {memberMaxDist / 1000.0:N0} km)", 4000, "Red");
+                HudEvents.PostLocal($"INSUFFICIENT FSD RANGE! (Need: {requiredDist / 1000.0:N0} km, Max: {memberMaxDist / 1000.0:N0} km)", 4000, "Red");
                 return;
             }
 
@@ -741,11 +763,12 @@ namespace WarpDriveMod
             };
             SendFleetMessage(msg);
 
-            MyAPIGateway.Utilities.ShowNotification($"Joined {targetLobby.LeaderGridName}'s Fleet Jump!", 3000, "White");
+            HudEvents.PostLocal($"Joined {targetLobby.LeaderGridName}'s Fleet Jump!", 3000, "White");
         }
 
         // Leaves or cancels a fleet jump
-        public static void CancelFleetJump(long gridId, long playerId)
+        /// <param name="reason">Shown to the removed ship instead of the default "left / removed / disbanded" text.</param>
+        public static void CancelFleetJump(long gridId, long playerId, string reason = null)
         {
             long leaderId;
             if (!_gridToLeaderMap.TryGetValue(gridId, out leaderId)) return;
@@ -770,7 +793,7 @@ namespace WarpDriveMod
                             var drive = fat?.GameLogic?.GetAs<WarpDrive>();
                             if (drive?.hyperspace != null && drive.hyperspace.IsFleetHolding)
                             {
-                                drive.hyperspace.AbortJump("FLEET JUMP DISBANDED BY LEADER");
+                                drive.hyperspace.AbortJump(reason ?? "FLEET JUMP DISBANDED BY LEADER");
                             }
                         }
                     }
@@ -786,9 +809,19 @@ namespace WarpDriveMod
             }
             else
             {
-                // Member left
+                // Member left (or the leader removed it)
+                var leaving = lobby.Members.Find(m => m.GridEntityId == gridId);
+                bool removedByLeader = leaving != null && playerId != 0L && playerId != leaving.PlayerId && playerId == lobby.LeaderPlayerId;
                 _gridToLeaderMap.Remove(gridId);
                 lobby.Members.RemoveAll(m => m.GridEntityId == gridId);
+
+                // Leaving an engaged fleet (an abort after the leader engaged): the ship is no longer in flight with it either,
+                // so the fleet still closes once the last ship that is flying lands
+                if (lobby.IsExecuting)
+                {
+                    lobby.InTransitGridIds.Remove(gridId);
+                    CloseLobbyIfLanded(leaderId, lobby);
+                }
 
                 var grid = MyEntities.GetEntityById(gridId) as MyCubeGrid;
                 if (grid != null)
@@ -798,7 +831,7 @@ namespace WarpDriveMod
                         var drive = fat?.GameLogic?.GetAs<WarpDrive>();
                         if (drive?.hyperspace != null && drive.hyperspace.IsFleetHolding)
                         {
-                            drive.hyperspace.AbortJump("LEFT FLEET JUMP");
+                            drive.hyperspace.AbortJump(reason ?? (removedByLeader ? "REMOVED FROM FLEET JUMP BY THE LEADER" : "LEFT FLEET JUMP"));
                         }
                     }
                 }
@@ -837,7 +870,7 @@ namespace WarpDriveMod
             // 1. Leader proximity obstacle check
             if (leaderHs != null && leaderHs.IsProximityDanger(leaderGrid.WorldMatrix, leaderGrid))
             {
-                MyAPIGateway.Utilities.ShowNotification("Cannot jump: Leader path is obstructed by a proximity hazard!", 4000, "Red");
+                HudEvents.PostLocal("Cannot jump: Leader path is obstructed by a proximity hazard!", 4000, "Red");
                 return;
             }
 
@@ -845,7 +878,7 @@ namespace WarpDriveMod
             double leaderOffset = GetMemberAlignmentOffset(leaderGridId, lobby);
             if (leaderOffset > HyperspaceSystem.ALIGNMENT_TOLERANCE_DEG)
             {
-                MyAPIGateway.Utilities.ShowNotification($"Cannot jump: Align leader ship with target! (Offset: {leaderOffset:F1}°, Max {HyperspaceSystem.ALIGNMENT_TOLERANCE_DEG:F1}°)", 4000, "Red");
+                HudEvents.PostLocal($"Cannot jump: Align leader ship with target! (Offset: {leaderOffset:F1}°, Max {HyperspaceSystem.ALIGNMENT_TOLERANCE_DEG:F1}°)", 4000, "Red");
                 return;
             }
 
@@ -870,7 +903,7 @@ namespace WarpDriveMod
 
                 if (memberHs != null && memberHs.State == HyperspaceSystem.HyperState.Cooldown)
                 {
-                    MyAPIGateway.Utilities.ShowNotification($"Cannot jump: {m.GridName}'s FSD is still cooling down!", 4000, "Red");
+                    HudEvents.PostLocal($"Cannot jump: {m.GridName}'s FSD is still cooling down!", 4000, "Red");
                     return;
                 }
 
@@ -880,17 +913,15 @@ namespace WarpDriveMod
                     bool isManned = memberHs != null && memberHs.HasHumanPilot();
                     if (isManned)
                     {
-                        MyAPIGateway.Utilities.ShowNotification($"Cannot jump: {m.GridName} is not aligned (Offset: {offset:F1}°, Max {HyperspaceSystem.ALIGNMENT_TOLERANCE_DEG:F1}°)", 4000, "Red");
+                        HudEvents.PostLocal($"Cannot jump: {m.GridName} is not aligned (Offset: {offset:F1}°, Max {HyperspaceSystem.ALIGNMENT_TOLERANCE_DEG:F1}°)", 4000, "Red");
                         return;
                     }
                     else
                     {
-                        // Unmanned drone failed to align in time: leave behind!
-                        MyAPIGateway.Utilities.ShowNotification($"{m.GridName} was not aligned ({offset:F1}°) and was left behind.", 4000, "White");
-                        memberHs?.ResetFleetAutoSteerGyros();
-                        memberHs?.AbortJump("FLEET JUMP LEFT BEHIND - FAILED ALIGNMENT");
-                        _gridToLeaderMap.Remove(m.GridEntityId);
-                        lobby.Members.RemoveAt(i);
+                        // Unmanned drone failed to align in time: leave it behind. CancelFleetJump drops it from the lobby here and,
+                        // through the Leave message, on every other machine, and spools its drive down (which also releases its gyros)
+                        HudEvents.PostLocal($"{m.GridName} was not aligned ({offset:F1}°) and was left behind.", 4000, "White");
+                        CancelFleetJump(m.GridEntityId, playerId, "FLEET JUMP LEFT BEHIND - FAILED ALIGNMENT");
                     }
                 }
             }
@@ -948,11 +979,25 @@ namespace WarpDriveMod
 
             Vector3D leaderDir = leaderHs.JumpDirection.LengthSquared() > 0.001 ? leaderHs.JumpDirection : leaderGrid.WorldMatrix.Forward;
 
-            // Execute Leader jump (0 delay)
-            leaderHs.ExecuteFleetMemberJump(0, Vector3D.Zero, leaderDir, leaderJourneyDuration, lobby.LeaderGridId, lobby.DepartureOrientation, lobby.LeaderJumpDistance);
-
-            // Execute Member jumps with formation offsets, staggered delays, and synchronized travel duration
+            // Work on a copy: a wingman that aborts below leaves the lobby, and removing it from the list being walked would skip the next ship
+            var members = new List<FleetMemberInfo>(lobby.Members);
             Vector3D leaderPos = leaderGrid.PositionComp.GetPosition();
+
+            double formationRadius = 0.0;
+            for (int i = 1; i < members.Count; i++)
+            {
+                var formationGrid = MyEntities.GetEntityById(members[i].GridEntityId) as MyCubeGrid;
+                if (formationGrid != null && !formationGrid.MarkedForClose)
+                    formationRadius = Math.Max(formationRadius, Vector3D.Distance(formationGrid.PositionComp.GetPosition(), leaderPos));
+            }
+            lobby.FormationRadius = Math.Min(formationRadius, FLEET_SCAN_RADIUS);
+
+            // Execute Leader jump (0 delay). The leader clears the fleet's lane of obstacles, which can shorten the jump
+            leaderHs.ExecuteFleetMemberJump(0, Vector3D.Zero, leaderDir, leaderJourneyDuration, lobby.LeaderGridId, lobby.DepartureOrientation, lobby.LeaderJumpDistance);
+            if (leaderHs.JumpDistance > 1.0)
+                lobby.LeaderJumpDistance = leaderHs.JumpDistance;
+
+            // Execute Member jumps with formation offsets, staggered delays, and the leader's travel duration and distance
             MatrixD leaderInv = MatrixD.Invert(lobby.DepartureOrientation);
 
             // Populate InTransitGridIds to dynamically track every ship in flight
@@ -960,9 +1005,9 @@ namespace WarpDriveMod
             lobby.InTransitGridIds.Add(lobby.LeaderGridId);
             _gridToLeaderMap[lobby.LeaderGridId] = lobby.LeaderGridId;
 
-            for (int i = 1; i < lobby.Members.Count; i++)
+            for (int i = 1; i < members.Count; i++)
             {
-                var member = lobby.Members[i];
+                var member = members[i];
                 var memberGrid = MyEntities.GetEntityById(member.GridEntityId) as MyCubeGrid;
                 if (memberGrid == null || memberGrid.MarkedForClose) continue;
 
@@ -1011,7 +1056,7 @@ namespace WarpDriveMod
                             break;
                         }
 
-                        int staggerTicks = GetDynamicFleetStaggerTicks(i, lobby.Members.Count, member.GridEntityId);
+                        int staggerTicks = GetDynamicFleetStaggerTicks(i, members.Count, member.GridEntityId);
                         member.StaggerDelayTicks = staggerTicks;
 
                         lobby.InTransitGridIds.Add(member.GridEntityId);
@@ -1042,20 +1087,26 @@ namespace WarpDriveMod
                 // As long as other ships in this fleet are still in transit, keep _gridToLeaderMap intact
                 // so later arriving ships still recognize the ships already at the destination as fellow fleet members.
                 // Once the LAST ship arrives (or aborts/drops out mid-jump), clean up the lobby and all grid mappings immediately.
-                if (lobby.InTransitGridIds.Count == 0)
-                {
-                    foreach (var member in lobby.Members)
-                    {
-                        _gridToLeaderMap.Remove(member.GridEntityId);
-                    }
-                    _gridToLeaderMap.Remove(leaderId);
-                    _activeLobbies.Remove(leaderId);
-                }
+                CloseLobbyIfLanded(leaderId, lobby);
             }
             else
             {
                 _gridToLeaderMap.Remove(gridId);
             }
+        }
+
+        // No ship of the fleet is in flight any more: close the lobby and release every ship from the fleet rules
+        private static void CloseLobbyIfLanded(long leaderId, FleetJumpLobby lobby)
+        {
+            if (lobby.InTransitGridIds.Count > 0)
+                return;
+
+            foreach (var member in lobby.Members)
+            {
+                _gridToLeaderMap.Remove(member.GridEntityId);
+            }
+            _gridToLeaderMap.Remove(leaderId);
+            _activeLobbies.Remove(leaderId);
         }
 
         // Network message handler
@@ -1115,6 +1166,8 @@ namespace WarpDriveMod
                                     break;
                                 }
                             }
+
+                            NotifyLocalPlayerOfInvite(lobby);
                         }
                     }
                     if (MyAPIGateway.Multiplayer.IsServer)
@@ -1195,6 +1248,20 @@ namespace WarpDriveMod
                     }
                     break;
 
+                case FleetActionType.UpdateTarget:
+                    FleetJumpLobby targetLobby;
+                    if (_activeLobbies.TryGetValue(msg.LeaderGridId, out targetLobby) && !targetLobby.IsExecuting)
+                    {
+                        ApplyFleetTarget(targetLobby, (HyperspaceSystem.JumpMode)msg.Mode, msg.HasGpsCoords ? (Vector3D?)msg.GpsCoords : null,
+                            msg.GpsName, msg.JumpDistanceRatio, msg.LeaderJumpDistance);
+                    }
+                    if (MyAPIGateway.Multiplayer.IsServer)
+                    {
+                        byte[] data = MyAPIGateway.Utilities.SerializeToBinary(msg);
+                        MyAPIGateway.Multiplayer.SendMessageToOthers(WarpDriveSession.fleetJumpPacket, data);
+                    }
+                    break;
+
                 case FleetActionType.ExecuteJump:
                     if (MyAPIGateway.Multiplayer.IsServer)
                     {
@@ -1224,27 +1291,24 @@ namespace WarpDriveMod
             }
         }
 
-        private static void NotifyGridOfFleetInvite(IMyCubeGrid grid, FleetJumpLobby lobby)
+        // The scan that creates a lobby only runs on the leader's machine, but every machine receives the lobby message:
+        // the invited pilot's own machine shows the invitation (a friendly lobby within range of the ship they sit in).
+        private static void NotifyLocalPlayerOfInvite(FleetJumpLobby lobby)
         {
-            var myGrid = grid as MyCubeGrid;
-            if (myGrid == null) return;
+            IMyPlayer local = MyAPIGateway.Session?.Player;
+            if (local == null || MyAPIGateway.Utilities.IsDedicated || local.IdentityId == lobby.LeaderPlayerId)
+                return;
 
-            // Discreet notification to avoid clutter
+            var seat = local.Character?.Parent as IMyCubeBlock;
+            IMyCubeGrid grid = seat?.CubeGrid;
+            if (grid == null || grid.EntityId == lobby.LeaderGridId || IsGridInFleet(grid.EntityId))
+                return;
+
+            if (GetNearestFriendlyLobby(grid, local.IdentityId) != lobby)
+                return;
+
             string targetText = lobby.Mode == HyperspaceSystem.JumpMode.GpsWaypoint ? lobby.TargetGpsName : "Manual Vector";
-            string text = $"[FLEET JUMP] {lobby.LeaderGridName} inviting to {targetText}. Use 'Fleet Jump' to Join.";
-
-            foreach (var fat in myGrid.GetFatBlocks())
-            {
-                var cockpit = fat as IMyCockpit;
-                if (cockpit?.Pilot != null)
-                {
-                    var player = MyAPIGateway.Players.GetPlayerControllingEntity(cockpit.Pilot);
-                    if (player != null)
-                    {
-                        MyAPIGateway.Utilities.ShowNotification(text, 5000, "White");
-                    }
-                }
-            }
+            HudEvents.Post(0L, 0L, $"[FLEET JUMP] {lobby.LeaderGridName} inviting to {targetText}. Use 'Fleet Jump' to Join.", HudSeverity.Info, HudRoute.Local, 5f);
         }
 
         // Relation helper checks

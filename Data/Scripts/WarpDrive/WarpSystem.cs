@@ -27,8 +27,13 @@ namespace WarpDriveMod
         public event Action<WarpSystem> OnSystemInvalidatedAction;
         public List<IMyPlayer> onlinePlayers = new List<IMyPlayer>();
         public double currentSpeedPt = Settings.GetShared().startSpeed;
+        private float streakSpeedFraction;
         public double throttleRatio = 0.0;
         public int driveHeat { get; set; }
+
+        /// <summary>Supercruise-only drives: the GPS the HUD's cruise assist is locked on. Client-side HUD aid only, never synced and never read by the drive.</summary>
+        public Vector3D? CruiseTargetCoords;
+        public string CruiseTargetName = string.Empty;
         public float heatGenerationRate { get; private set; }
         public float heatDissipationRate { get; private set; }
         public float heatCapacity { get; private set; }
@@ -65,6 +70,7 @@ namespace WarpDriveMod
         private readonly MyEntity3DSoundEmitter loopSound;
         private long startChargeRuntime;
         private long spoolFinishTick;
+        private long spoolTotalTicks;
         private bool enemyInRange;
         private bool hasEnoughPower = true;
         private bool primaryFunctional;
@@ -72,7 +78,6 @@ namespace WarpDriveMod
         private float totalHeat = 0;
         private int cachedActiveSinks = 0;
         private int cachedActiveSmallSinks = 0;
-        private int _updateTicks = 0;
         private int speedUpSendToServerTick = 0;
         private int speedDownSendToServerTick = 0;
         private int powerCheckTick = 0;
@@ -250,6 +255,14 @@ namespace WarpDriveMod
                             loopSound.PlaySound(WarpSound.cruiseOperatingSound, true);
                     }
 
+                    // Streaks rushing past the ship for the pilot (the speed against the top speed is refreshed twice a second)
+                    if (WarpDriveSession.instance.runtime % 30 == 0)
+                    {
+                        double high = GetCurrentHighDeckMps(GetGravityInfluenceFactor());
+                        streakSpeedFraction = high > 1.0 ? (float)MathHelper.Clamp(currentSpeedPt * 60.0 / high, 0.0, 1.0) : 0f;
+                    }
+                    CruiseStreakFx.Update(mainGrid, gridMatrix, streakSpeedFraction);
+
                     float shake = GetSupercruiseGravityShakeMagnitude();
                     if (shake > 0.001f)
                     {
@@ -369,45 +382,114 @@ namespace WarpDriveMod
 
         public void Draw()
         {
-            hyperspace?.DrawTargetReticle();
-            capitalFSD?.DrawTargetReticle();
-
-            if (warpState != State.active)
-                return;
-
-            DrawCruiseLine(Color.CornflowerBlue, 1000, 180);
-
-            if (currentSpeedPt < 316.6666)
-                DrawCruiseLine(Color.Indigo, 800, 220);
-
-            if (currentSpeedPt <= 1f)
-                return;
-
-            DrawCruiseLine(Color.SteelBlue, 1200, 240);
-
-            if (currentSpeedPt > 316.6666)
-                DrawCruiseLine(Color.LightGoldenrodYellow, 1500, 90);
+            Vector3D pos, forward, down;
+            double speedPt;
+            bool small;
+            long id;
+            if (TryGetTrailState(out id, out pos, out forward, out down, out speedPt, out small))
+                DrawTrail(pos, forward, down, speedPt, small);
         }
 
-        private void DrawCruiseLine(Vector4 color, double behind, double ahead)
+        /// <summary>Where the trail of this ship is drawn from, while it is in supercruise (also what the server relays to far players).</summary>
+        public bool TryGetTrailState(out long id, out Vector3D pos, out Vector3D forward, out Vector3D down, out double speedPt, out bool small)
         {
-            if (grid.mainGrid == null)
+            id = 0L;
+            pos = forward = down = Vector3D.Zero;
+            speedPt = 0.0;
+            small = false;
+
+            var mainGrid = grid?.mainGrid;
+            if (warpState != State.active || mainGrid == null || mainGrid.MarkedForClose || mainGrid.Physics == null)
+                return false;
+
+            id = mainGrid.EntityId;
+            pos = mainGrid.Physics.CenterOfMassWorld;
+            forward = gridMatrix.Forward;
+            down = gridMatrix.Down;
+            speedPt = currentSpeedPt;
+            small = mainGrid.GridSizeEnum == MyCubeSize.Small;
+            return true;
+        }
+
+        /// <summary>The supercruise trail: for loaded ships and, through <see cref="CruiseTrailRelay"/>, for far ones the server reports.</summary>
+        public static void DrawTrail(Vector3D pos, Vector3D forward, Vector3D down, double speedPt, bool small)
+        {
+            DrawCruiseLine(pos, forward, down, speedPt, small, Color.CornflowerBlue, 1000, 180);
+
+            if (speedPt < 316.6666)
+                DrawCruiseLine(pos, forward, down, speedPt, small, Color.Indigo, 800, 220);
+
+            if (speedPt <= 1f)
+                return;
+
+            DrawCruiseLine(pos, forward, down, speedPt, small, Color.SteelBlue, 1200, 240);
+
+            if (speedPt > 316.6666)
+                DrawCruiseLine(pos, forward, down, speedPt, small, Color.LightGoldenrodYellow, 1500, 90);
+        }
+
+        private static void DrawCruiseLine(Vector3D pos, Vector3D forward, Vector3D down, double speedPt, bool small, Vector4 color, double behind, double ahead)
+        {
+            try
+            {
+                Vector3D startPos = pos + (forward * (small ? ahead / 2 : ahead)) + (down * 12f);
+                Vector3D endPos = pos - (forward * ((small ? behind / 2 : behind) - (speedPt / 3))) + (down * 12f);
+                MyStringId material = MyStringId.GetOrCompute("SciFiEngineThrustMiddle");
+                float thickness = small ? 1.5f : 3.5f;   // a thin bright core; the glow around it is drawn wider and faint
+
+                // Seen from far away the trail keeps a pixel or two of width and a visible length instead of shrinking to nothing:
+                // thousands of kilometres off it reads as a thin bright streak across the sky
+                var camera = MyAPIGateway.Session?.Camera;
+                if (camera != null)
+                {
+                    double distance = Vector3D.Distance(camera.Position, pos);
+                    float farThickness = (float)(distance * 0.0015);
+                    if (farThickness > thickness)
+                    {
+                        thickness = farThickness;
+                        double stretch = distance / 20000.0;
+                        startPos = pos + (startPos - pos) * Math.Max(1.0, stretch * 0.25);
+                        endPos = pos + (endPos - pos) * Math.Max(1.0, stretch);
+                    }
+                }
+
+                Vector4 glow = color * MyUtils.GetRandomFloat(0.14f, 0.2f);   // a faint shimmer
+                MySimpleObjectDraw.DrawLine(startPos, endPos, material, ref glow, thickness * 6f);
+                MySimpleObjectDraw.DrawLine(startPos, endPos, material, ref color, thickness);
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// Dropping out of supercruise flashes like a hyperspace arrival: the same flash and incoming streak at the ship's nose
+        /// (particles only, the cruise has its own end sound). Seen by everyone near enough to have the ship loaded.
+        /// </summary>
+        private void SpawnCruiseExitFX(MyCubeGrid mainGrid)
+        {
+            if (mainGrid == null)
                 return;
 
             try
             {
-                bool small = grid.mainGrid.GridSizeEnum == MyCubeSize.Small;
-                Vector3D pos = grid.mainGrid.Physics.CenterOfMassWorld;
-                Vector3D startPos = pos + (gridMatrix.Forward * (small ? ahead / 2 : ahead)) + (gridMatrix.Down * 12f);
-                Vector3D endPos = pos - (gridMatrix.Forward * ((small ? behind / 2 : behind) - (currentSpeedPt / 3))) + (gridMatrix.Down * 12f);
-                MyStringId material = MyStringId.GetOrCompute("SciFiEngineThrustMiddle");
-                float thickness = MyUtils.GetRandomFloat(1.1f * (small ? 18 : 38), 1.8f * (small ? 18 : 38));
+                var iGrid = (IMyCubeGrid)mainGrid;
+                Vector3D direction = gridMatrix.Forward.LengthSquared() > 0.5 ? gridMatrix.Forward : mainGrid.WorldMatrix.Forward;
+                Vector3D up = Math.Abs(Vector3D.Dot(direction, Vector3D.Up)) > 0.95 ? Vector3D.Forward : Vector3D.Up;
+                Vector3D position = mainGrid.PositionComp.WorldAABB.Center + direction * (mainGrid.PositionComp.WorldAABB.HalfExtents.AbsMax() + 8.0);
 
-                MySimpleObjectDraw.DrawLine(startPos, endPos, material, ref color, thickness);
-                MySimpleObjectDraw.DrawLine(startPos, endPos, material, ref color, thickness * 0.66f);
-                MySimpleObjectDraw.DrawLine(startPos, endPos, material, ref color, thickness * 0.33f);
+                float width = Math.Max(iGrid.LocalAABB.Width, iGrid.LocalAABB.Height);
+                float scale = mainGrid.GridSizeEnum == MyCubeSize.Large
+                    ? MathHelper.Clamp(width / 15f, 1.5f, 5.0f)
+                    : MathHelper.Clamp(width / 8f, 0.8f, 2.5f);
+
+                MatrixD matrix = MatrixD.CreateWorld(position, direction, up);
+                MyParticleEffect flash;
+                if (MyParticlesManager.TryCreateParticleEffect("HyperspaceJumpArrival", ref matrix, ref position, uint.MaxValue, out flash))
+                    flash.UserScale = scale;
             }
-            catch { }
+            catch (Exception ex)
+            {
+                MyLog.Default.Error("[Supercruise] SpawnCruiseExitFX error: " + ex);
+            }
         }
 
         public bool IsPilot(IMyPlayer player)
@@ -543,6 +625,11 @@ namespace WarpDriveMod
                 {
                     warpState = State.charging;
                     UpdateHeatStats(true);
+                    spoolTotalTicks = message.spoolTicksRemaining;
+                }
+                else if (message.spoolTicksRemaining > spoolTotalTicks)
+                {
+                    spoolTotalTicks = message.spoolTicksRemaining;
                 }
 
                 spoolFinishTick = WarpDriveSession.instance.runtime + message.spoolTicksRemaining;
@@ -794,7 +881,7 @@ namespace WarpDriveMod
             foreach (var player in playersInWarpList)
             {
                 if (player != null)
-                    MyVisualScriptLogicProvider.ShowNotification(warnNotSeatedHUD, 5000, "Red", player.IdentityId);
+                    HudEvents.Post(grid?.mainGrid?.EntityId ?? 0L, player.IdentityId, warnNotSeatedHUD, HudSeverity.Critical, HudRoute.Server, 5f);
             }
 
             Dewarp(true);
@@ -865,6 +952,13 @@ namespace WarpDriveMod
                 return;
             }
 
+            string hyperdictionBlock = HyperdictionRules.JumpBlocker(grid.mainGrid, false);
+            if (hyperdictionBlock != null)
+            {
+                SendMessage(hyperdictionBlock, 4f, "Red", playerID);
+                return;
+            }
+
             UpdateHeatStats(true);
 
             bool prototech = IsPrototech(drive);
@@ -908,7 +1002,36 @@ namespace WarpDriveMod
                 seconds = Math.Max(seconds, settings.DelayJumpIfEnemyIsNear);
 
             spoolFinishTick = startChargeRuntime + (long)(seconds * 60);
+            spoolTotalTicks = (long)(seconds * 60);
         }
+
+        // ------------------------------------------------------------------ read-only state for the HUD
+
+        /// <summary>True while the spool is held back because hostile grids are near.</summary>
+        public bool SpoolDelayedByEnemy { get { return warpState == State.charging && enemyInRange && (Settings.instance?.AllowToDetectEnemyGrids ?? false); } }
+
+        public float SpoolSecondsLeft
+        {
+            get
+            {
+                if (warpState != State.charging || WarpDriveSession.instance == null)
+                    return 0f;
+                return Math.Max(0L, spoolFinishTick - WarpDriveSession.instance.runtime) / 60f;
+            }
+        }
+
+        public float SpoolProgress
+        {
+            get
+            {
+                if (spoolTotalTicks <= 0)
+                    return 0f;
+                return MathHelper.Clamp(1f - SpoolSecondsLeft * 60f / spoolTotalTicks, 0f, 1f);
+            }
+        }
+
+        /// <summary>Power the drive is drawing for the current phase (spool or cruise), in MW.</summary>
+        public float DisplayPowerMW { get { return primaryFunctional && primaryDrive != null ? primaryDrive.requiredPower : 0f; } }
 
         private void StartWarp()
         {
@@ -987,12 +1110,12 @@ namespace WarpDriveMod
 
         public static bool IsPrototech(WarpDrive drive)
         {
-            return drive?.block != null && new[] { "PrototechFSDriveLarge", "PrototechFSDriveSmall" }.Contains(drive.block.BlockDefinition.SubtypeId);
+            return drive?.block != null && drive.block.BlockDefinition.SubtypeId.StartsWith("Prototech") && !drive.isCapitalFSD;   // the 9S capital FSD has no supercruise and keeps its own numbers
         }
 
         public static bool IsSmallDrive(WarpDrive drive)
         {
-            return drive?.block != null && new[] { "FSDriveSmall", "PrototechFSDriveSmall" }.Contains(drive.block.BlockDefinition.SubtypeId);
+            return drive?.block != null && drive.block.BlockDefinition.SubtypeId.Contains("DriveSmall");
         }
 
         public void Dewarp(bool collision = false)
@@ -1006,6 +1129,9 @@ namespace WarpDriveMod
             if (!MyAPIGateway.Utilities.IsDedicated)
             {
                 StopParticleEffect();
+
+                if (warpState == State.active)
+                    SpawnCruiseExitFX(mainGrid);
 
                 if (loopSound != null)
                 {
@@ -1123,22 +1249,27 @@ namespace WarpDriveMod
             {
                 long ticksLeft = spoolFinishTick - WarpDriveSession.instance.runtime;
 
+                // The spool sound runs for the last 10 s, the particle effect (WarpStart.sbc, peaking at 5 s) for the last 5 s
+                if (!spoolSoundStarted && ticksLeft <= 600 && sound != null)
+                {
+                    spoolSoundStarted = true;
+                    sound.PlaySound(isPrototech ? WarpSound.cruiseSpoolSoundProto : WarpSound.cruiseSpoolSound, true);
+                    sound.VolumeMultiplier = isPrototech ? 1 : 2;
+                }
+
                 if (effect == null)
                 {
-                    if (ticksLeft <= 600)
-                    {
+                    if (ticksLeft <= PARTICLE_LEAD_TICKS)
                         PlayParticleEffect();
-
-                        if (effect != null && sound != null)
-                        {
-                            sound.PlaySound(isPrototech ? WarpSound.cruiseSpoolSoundProto : WarpSound.cruiseSpoolSound, true);
-                            sound.VolumeMultiplier = isPrototech ? 1 : 2;
-                        }
-                    }
                 }
-                else if (ticksLeft > 600)
+                else if (ticksLeft > PARTICLE_LEAD_TICKS)
                 {
                     StopParticleEffect(true);
+                }
+
+                if (spoolSoundStarted && ticksLeft > 600)
+                {
+                    spoolSoundStarted = false;
                     sound?.StopSound(true);
                 }
 
@@ -1413,28 +1544,6 @@ namespace WarpDriveMod
                         }
                     }
                 }
-
-                if ((warpState != State.idle || driveHeat > 0) && _updateTicks++ >= (MyAPIGateway.Utilities.IsDedicated ? 61 : 62))
-                {
-                    _updateTicks = 0;
-
-                    bool enemyDelay = warpState == State.charging && settings.AllowToDetectEnemyGrids && enemyInRange;
-
-                    if (warpState == State.active)
-                        SendMessage($"Speed: {FormatSpeed(currentSpeedPt)}", 1f, "White");
-                    else if (enemyDelay)
-                        SendMessage("Enemy Detected! Spooling Delayed!", 1f, "Red");
-
-                    if (driveHeat > 0)
-                        SendMessage($"Heat Level: {driveHeat}%" + (driveHeat >= 75 ? "!" : "") + (driveHeat >= 85 ? "*" : "") + (driveHeat >= 90 ? "*" : "") + (driveHeat >= 95 ? "*" : ""),
-                            1f, driveHeat >= (warpState == State.charging ? 65 : 85) ? "Red" : "White");
-
-                    if (warpState == State.active)
-                        SendMessage($"Power Usage : {displayPower:0.00}Mw", 1f, "White");
-                    else if (warpState == State.charging)
-                        SendMessage($"Power Usage: {displayPower:0.00}Mw\nSeconds to Warp: {(Math.Max(0L, spoolFinishTick - WarpDriveSession.instance.runtime) + 59) / 60}",
-                            1f, enemyDelay ? "Red" : "White");
-                }
             }
             catch { }
         }
@@ -1502,6 +1611,9 @@ namespace WarpDriveMod
                 : 0f;
         }
 
+        private const long PARTICLE_LEAD_TICKS = 300;   // WarpStart.sbc builds for 5 s
+        private bool spoolSoundStarted;
+
         private void PlayParticleEffect()
         {
             if (grid.mainGrid == null)
@@ -1519,12 +1631,14 @@ namespace WarpDriveMod
             Vector3D origin = grid.mainGrid.PositionComp.WorldAABB.Center;
             fromDir.Translation = effectPosition;
 
-            MyParticlesManager.TryCreateParticleEffect(isPrototech ? "Warp_Prototech" : "WarpStart", ref fromDir, ref origin, uint.MaxValue, out effect);
+            if (!MyParticlesManager.TryCreateParticleEffect("WarpStart", ref fromDir, ref origin, uint.MaxValue, out effect))
+                MyLog.Default.WriteLine("[Supercruise] the WarpStart particle effect could not be created");
 
             if (effect != null)
             {
                 BoundingBox localBox = ((IMyCubeGrid)grid.mainGrid).LocalAABB;
                 effect.UserScale = Math.Max(localBox.Width, localBox.Height) / (grid.mainGrid.GridSizeEnum == MyCubeSize.Large ? 60 : 30);
+                MyLog.Default.WriteLine("[Supercruise] charge effect started: scale " + effect.UserScale.ToString("0.00") + " at " + effectPosition);
             }
         }
 
@@ -1541,6 +1655,7 @@ namespace WarpDriveMod
 
         private void StopParticleEffect(bool instantly = false)
         {
+            spoolSoundStarted = false;
             if (effect == null)
                 return;
 
@@ -1591,39 +1706,13 @@ namespace WarpDriveMod
             OnSystemInvalidatedAction = null;
         }
 
-        public void SendMessage(string msg, float seconds = 5, string font = "Red", long playerID = 0L)
+        /// <summary>
+        /// Shows a message on the FSD HUD. Supercruise logic runs on the server, which works out who is on board and sends each remote player the event;
+        /// code that runs on every machine in lockstep must pass HudRoute.Local instead.
+        /// </summary>
+        public void SendMessage(string msg, float seconds = 5, string font = "Red", long playerID = 0L, HudRoute route = HudRoute.Server)
         {
-            var hostplayer = MyAPIGateway.Session?.Player;
-            var cockpit = hostplayer?.Character?.Parent as IMyShipController;
-
-            if (onlinePlayers != null && onlinePlayers.Count > 0 && playerID > 0)
-            {
-                foreach (var selectedPlayer in onlinePlayers)
-                {
-                    if (selectedPlayer.IdentityId == playerID)
-                    {
-                        MyVisualScriptLogicProvider.ShowNotification(msg, (int)(seconds * 1000), font, selectedPlayer.IdentityId);
-                        return;
-                    }
-                }
-            }
-
-            if (hostplayer != null && cockpit?.CubeGrid != null && grid.Contains((MyCubeGrid)cockpit.CubeGrid))
-                MyVisualScriptLogicProvider.ShowNotification(msg, (int)(seconds * 1000), font, hostplayer.IdentityId);
-
-            if (onlinePlayers != null && onlinePlayers.Count > 0)
-            {
-                foreach (var clientPlayer in onlinePlayers)
-                {
-                    if (hostplayer != null && clientPlayer.IdentityId == hostplayer.IdentityId)
-                        continue;
-
-                    var clientCockpit = clientPlayer?.Character?.Parent as IMyShipController;
-
-                    if (clientCockpit?.CubeGrid != null && grid.Contains((MyCubeGrid)clientCockpit.CubeGrid))
-                        MyVisualScriptLogicProvider.ShowNotification(msg, (int)(seconds * 1000), font, clientPlayer.IdentityId);
-                }
-            }
+            HudEvents.Post(grid?.mainGrid?.EntityId ?? 0L, playerID, msg, HudEvents.Classify(msg, font), route, seconds);
         }
 
         private void OnDriveAdded(IMyCubeBlock block)

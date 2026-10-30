@@ -102,14 +102,75 @@ namespace WarpDriveMod
         private long stateTotalTicks = 0;
         private long triggeringPlayerId = 0L;
 
+        // ------------------------------------------------------------------ read-only state for the HUD
+
+        public long TriggeringPlayerId { get { return triggeringPlayerId; } }
+
+        /// <summary>Seconds left in the current state; 0 while holding for alignment (that state has no timer).</summary>
+        public float StateSecondsLeft { get { return stateTotalTicks > 0 ? Math.Max(0f, (stateTotalTicks - stateElapsedTicks) / 60f) : 0f; } }
+        public float StateProgress { get { return stateTotalTicks > 0 ? MathHelper.Clamp((float)stateElapsedTicks / stateTotalTicks, 0f, 1f) : 0f; } }
+
+        /// <summary>Camera-shake magnitude of the transit right now (1 = steady, higher under a Hyperdictor). The HUD shakes with the same value.</summary>
+        public float TransitShakeMagnitude
+        {
+            get
+            {
+                float shake = 1.0f;
+                if (Hyperdiction != null)
+                    shake = Math.Max(shake, Hyperdiction.ShakeAt(Hyperdiction.ElapsedTicks));
+                return shake;
+            }
+        }
+
+        /// <summary>Share of the jump distance covered so far while in the tunnel.</summary>
+        public float TransitDistanceProgress
+        {
+            get
+            {
+                if (State != CapState.Transit || stateTotalTicks <= 0)
+                    return State == CapState.JumpOut || State == CapState.Cooldown ? 1f : 0f;
+
+                float progress;
+                double speed;
+                HyperspaceSystem.CalculateTransitProgress(stateElapsedTicks / 60.0, stateTotalTicks / 60.0, JumpDistance, out progress, out speed, HyperspaceSystem.TRANSIT_ACCEL_SECONDS, 0.0);
+                return progress;
+            }
+        }
+
+        /// <summary>The direction the nose has to point at while holding for alignment and charging.</summary>
+        public bool TryGetAlignTarget(out Vector3D dir)
+        {
+            return TryGetAlignTarget(GetShipController(), out dir);
+        }
+
+        /// <summary>Same, with a cockpit the caller already has.</summary>
+        public bool TryGetAlignTarget(IMyShipController cockpit, out Vector3D dir)
+        {
+            dir = Vector3D.Zero;
+            if (cockpit == null)
+                return false;
+
+            if (Mode == HyperspaceSystem.JumpMode.GpsWaypoint && SelectedGpsCoords.HasValue)
+                dir = SelectedGpsCoords.Value - cockpit.WorldMatrix.Translation;
+            else if (JumpDirection.LengthSquared() > 0.001)
+                dir = JumpDirection;
+            else
+                dir = cockpit.WorldMatrix.Forward;
+
+            if (dir.LengthSquared() < 1e-9)
+                return false;
+
+            dir.Normalize();
+            return true;
+        }
+
         // Sounds & Emitters
         private MyEntity3DSoundEmitter localEmitter;
         private MyEntity3DSoundEmitter transitSound;
         private bool _spectatorHidden = false;
         private MyParticleEffect wormholeCloudParticle;
         private MyParticleEffect wormholeFlashParticle;
-        private MyParticleEffect tunnelParticleFront;
-        private MyParticleEffect tunnelParticleRear;
+        private MyParticleEffect tunnelParticle;   // the hyperspace tunnel seen from aboard (local pilot only), Data/HyperspaceTunnel.sbc
 
         // Players in transit - Character.Save suppression
         private readonly List<IMyPlayer> _playersInTransit = new List<IMyPlayer>();
@@ -126,9 +187,6 @@ namespace WarpDriveMod
 
         public MyCubeGrid HyperdictionGrid { get { return GridSystem?.mainGrid; } }
         public bool CanBeHyperdicted { get { return State == CapState.Transit && Hyperdiction == null && GridSystem?.mainGrid != null && !GridSystem.mainGrid.MarkedForClose; } }
-
-        private static readonly MyStringId SkyMaterial = MyStringId.GetOrCompute("Square");
-        private static readonly Vector4 SkyColorVec4 = new Vector4(0.005f, 0.008f, 0.02f, 1.0f);
 
         // Mesh Wipe Session Data
         public struct BlockWipeData
@@ -174,6 +232,12 @@ namespace WarpDriveMod
         private int _transitRevealIndex = 0;
         private int _transitRevealPerTick = 0;
         private bool _isTransitRevealActive = false;
+
+        // The pilot's own view of the portal (local player only): hyperspace shows through the portal once the nose starts crossing,
+        // surrounds the ship once the camera is through, and lingers over the first seconds of the exit while the exit cloud forms
+        private bool _entryPreview;
+        private bool _entryCrossed;
+        private bool _exitBridge;
         private const int TRANSIT_REVEAL_TICKS = 90; // ~1.5 seconds at 60 FPS
 
         // In-transit dynamic obstacle re-check flags (at 25%, 50%, and 90% progress)
@@ -254,14 +318,8 @@ namespace WarpDriveMod
 
         public void SendNotification(string text, float seconds = 4f, string color = "White")
         {
-            if (HostDrive?.warpSystem != null)
-            {
-                HostDrive.warpSystem.SendMessage(text, seconds, color, triggeringPlayerId);
-            }
-            else
-            {
-                MyAPIGateway.Utilities?.ShowNotification(text, (int)(seconds * 1000), color);
-            }
+            // Runs on every machine in lockstep: each one shows the message only to its own local player
+            HudEvents.Post(GridSystem?.mainGrid?.EntityId ?? 0L, triggeringPlayerId, text, HudEvents.Classify(text, color), HudRoute.Local, seconds);
         }
 
         public void TriggerJump(long playerId)
@@ -300,6 +358,13 @@ namespace WarpDriveMod
             if (WarpDriveSession.instance != null && (WarpDriveSession.instance.IsHyperspaceActiveForGrid(mainGrid) || WarpDriveSession.instance.IsInHyperspaceOrTransit(mainGrid)))
             {
                 SendNotification("HYPERSPACE IN USE - CAPITAL FSD BLOCKED", 4f, "Red");
+                return;
+            }
+
+            string hyperdictionBlock = HyperdictionRules.JumpBlocker(mainGrid, true);
+            if (hyperdictionBlock != null)
+            {
+                SendNotification(hyperdictionBlock, 4f, "Red");
                 return;
             }
 
@@ -438,6 +503,7 @@ namespace WarpDriveMod
             checkedObstacle25 = false;
             checkedObstacle50 = false;
             checkedObstacle90 = false;
+            stateTotalTicks = 0;
             State = CapState.HoldingCharge;
             SendNotification("ALIGN WITH TARGET TO INITIATE CHARGE", 4f, "Red");
         }
@@ -587,6 +653,7 @@ namespace WarpDriveMod
                 SendNotification("ALIGNMENT LOST - CHARGE COLLAPSED", 4f, "Red");
                 State = CapState.HoldingCharge;
                 stateElapsedTicks = 0;
+                stateTotalTicks = 0;
                 return;
             }
 
@@ -654,11 +721,6 @@ namespace WarpDriveMod
 
             double dot = MathHelper.Clamp(Vector3D.Dot(cockpit.WorldMatrix.Forward, JumpDirection), -1.0, 1.0);
             double deviation = MathHelper.ToDegrees(Math.Acos(dot));
-
-            if (stateElapsedTicks % 60 == 0)
-            {
-                SendNotification($"ALIGN TO TARGET | OFFSET: {deviation:F1}° (Max {ALIGNMENT_TOLERANCE_DEG:F1}°)", 1f, "Red");
-            }
 
             if (deviation <= ALIGNMENT_TOLERANCE_DEG)
             {
@@ -749,6 +811,9 @@ namespace WarpDriveMod
 
             CollectPlayersOnGrid();
             SetGridInvincibility(true);
+            _entryPreview = false;
+            _entryCrossed = false;
+            _exitBridge = false;
 
             var mainGrid = GridSystem.mainGrid;
             Vector3D forward = JumpDirection.LengthSquared() > 0.001 ? JumpDirection : mainGrid.WorldMatrix.Forward;
@@ -809,14 +874,47 @@ namespace WarpDriveMod
                 m.Translation += currentWipe.PlaneNormal * currentWipe.StepDistance;
                 SafeTeleportMainGrid(m);
 
-                // Mesh Slice: Hide blocks passing through the fixed wormhole plane
-                SliceBlocksHide(currentWipe);
+                // Mesh Slice: Hide blocks passing through the fixed wormhole plane. Not for a pilot who is already through: for them
+                // the rest of the ship is coming into hyperspace with them
+                if (!_entryCrossed)
+                    SliceBlocksHide(currentWipe);
             }
+
+            UpdateEntryHyperspaceView(elapsedSeconds);
 
             if (stateElapsedTicks >= stateTotalTicks)
             {
                 StartTransit();
             }
+        }
+
+        /// <summary>
+        /// Local pilot only (timings untouched): as soon as the nose starts into the portal, the hyperspace tunnel streams out of it ahead
+        /// of the ship, so the blocks vanish into hyperspace instead of into empty space. The moment the camera passes the portal plane,
+        /// the tunnel closes in all around, the sun is hidden and the ship reappears around the pilot, as it does in transit.
+        /// </summary>
+        private void UpdateEntryHyperspaceView(float elapsedSeconds)
+        {
+            if (MyAPIGateway.Utilities.IsDedicated || currentWipe == null || elapsedSeconds < JUMP_IN_WIPE_DELAY_SECONDS || !IsLocalPlayerOnboard())
+                return;
+
+            if (!_entryPreview)
+            {
+                _entryPreview = true;
+                StartTransitTunnelFX(false);          // no transit loop yet (the jump-in sound is playing)
+            }
+
+            var camera = MyAPIGateway.Session?.Camera;
+            if (!_entryCrossed && camera != null && Vector3D.Dot(camera.Position - currentWipe.PlaneOrigin, currentWipe.PlaneNormal) > 0.0)
+            {
+                _entryCrossed = true;
+                HyperspaceSunManager.Instance.RequestSuppression(this, true);
+                StartTransitSmoothReveal();
+            }
+
+            UpdateTransitTunnelFX(false);
+            if (_entryCrossed)
+                UpdateTransitSmoothReveal();
         }
 
         private void StartTransit()
@@ -871,8 +969,9 @@ namespace WarpDriveMod
             CollectPlayersOnGrid();
             SetPlayersSave(false);
 
-            // Begin smooth nose-to-tail materialization inside the hyperspace tunnel
-            StartTransitSmoothReveal();
+            // Begin smooth nose-to-tail materialization inside the hyperspace tunnel (already running for a pilot who crossed the portal)
+            if (!_entryCrossed)
+                StartTransitSmoothReveal();
 
             StopWormholeParticles();
             StartTransitTunnelFX();
@@ -882,33 +981,11 @@ namespace WarpDriveMod
 
         // ------------------------------------------------------------------ Hyperdiction
 
-        private static bool IsAuthorityMachine { get { return MyAPIGateway.Multiplayer.IsServer || MyAPIGateway.Utilities.IsDedicated; } }
+        private static bool IsAuthorityMachine { get { return NetAuthority.IsAuthority; } }
 
         /// <summary>
         /// A Hyperdictor caught this ship. Starts the deterministic 9s sequence at half intensity (capital ships are heavier).
         /// </summary>
-        public bool IsTrackable { get { return CanBeHyperdicted; } }
-
-        public bool TryGetTransitPlan(out HyperdictionTransitPlan plan)
-        {
-            plan = null;
-            if (!CanBeHyperdicted || JumpDirection.LengthSquared() < 0.001 || stateTotalTicks <= 0)
-                return false;
-
-            plan = new HyperdictionTransitPlan
-            {
-                Origin = JumpOrigin,
-                Direction = Vector3D.Normalize(JumpDirection),
-                Distance = JumpDistance,
-                ElapsedSeconds = stateElapsedTicks / 60.0,
-                TotalSeconds = stateTotalTicks / 60.0,
-                AccelSeconds = HyperspaceSystem.TRANSIT_ACCEL_SECONDS,
-                DecelSeconds = 0.0,
-                InTransit = true
-            };
-            return true;
-        }
-
         public bool BeginHyperdiction(long hyperdictorBlockId, int seed, Vector3D dropPos)
         {
             var mainGrid = GridSystem?.mainGrid;
@@ -1003,6 +1080,8 @@ namespace WarpDriveMod
             if (seq == null || mainGrid == null)
                 return;
 
+            HyperdictionRules.StartLockout(mainGrid);
+
             Vector3D center, tangent;
             seq.PathAt(HyperdictionSequence.TOTAL_TICKS, out center, out tangent);
 
@@ -1064,14 +1143,14 @@ namespace WarpDriveMod
             }
         }
 
-        // 5s power blackout + half-intensity tumble once the ship has emerged from the portal
+        // Power blackout (as long as a standard FSD's after a hyperdiction) + half-intensity tumble once the ship has emerged from the portal
         private void ApplyHyperdictionAftermath()
         {
             var mainGrid = GridSystem?.mainGrid;
             if (mainGrid == null)
                 return;
 
-            const double blackoutSeconds = 5.0;
+            double blackoutSeconds = HyperdictionRules.AFTERMATH_SECONDS;
             long restoreTicks = DateTime.UtcNow.Ticks + TimeSpan.FromSeconds(blackoutSeconds).Ticks;
 
             var grids = GridSystem.gridGroup;
@@ -1305,7 +1384,7 @@ namespace WarpDriveMod
             }
         }
 
-        // Client-side transit effects: sun suppression, tunnel, backdrop, spectator hiding and cockpit shake.
+        // Client-side transit effects: sun suppression, tunnel, spectator hiding and cockpit shake.
         // Shared by the normal transit tick and the hyperdiction sequence so the tunnel never drops out while a ship is held.
         private void UpdateTransitClientFX(float shakeMagnitude, bool playTransitLoop)
         {
@@ -1319,7 +1398,6 @@ namespace WarpDriveMod
                 HyperspaceSunManager.Instance.RequestSuppression(this, true);
                 UpdateTransitTunnelFX(playTransitLoop);
                 UpdateTransitSmoothReveal();
-                DrawHyperspaceBackdrop();
 
                 // Spectator check for grid visibility during transit
                 var controller = MyAPIGateway.Session?.CameraController;
@@ -1372,13 +1450,22 @@ namespace WarpDriveMod
 
         public void StartJumpOut()
         {
-            HyperspaceSunManager.Instance.ReleaseSuppression(this, false);
             State = CapState.JumpOut;
             stateElapsedTicks = 0;
             stateTotalTicks = (long)(JUMP_OUT_SECONDS * 60f);
 
-            StopTransitParticles();
+            // The tunnel stops emitting and fades out over the first seconds while the exit cloud forms (the sun stays hidden until then)
             StopTransitSound();
+            _exitBridge = !MyAPIGateway.Utilities.IsDedicated && IsLocalPlayerOnboard();
+            if (_exitBridge)
+            {
+                if (tunnelParticle != null) tunnelParticle.StopEmitting(JUMP_OUT_WIPE_DELAY_SECONDS);
+            }
+            else
+            {
+                StopTransitParticles();
+                HyperspaceSunManager.Instance.ReleaseSuppression(this, false);
+            }
 
             var mainGrid = GridSystem.mainGrid;
             Vector3D forward = JumpDirection.LengthSquared() > 0.001 ? JumpDirection : mainGrid.WorldMatrix.Forward;
@@ -1419,6 +1506,8 @@ namespace WarpDriveMod
             MatrixD targetMatrix = JumpOrientation;
             targetMatrix.Translation = targetOrigin;
             SafeTeleportMainGrid(targetMatrix);
+            if (_exitBridge && tunnelParticle != null)
+                AimTunnel();   // the fading tunnel jumps with the ship, so it is not left behind for a frame
 
             currentWipe = new WipeSession
             {
@@ -1457,6 +1546,22 @@ namespace WarpDriveMod
             // Keep exit wormhole particle positioned at fixed exit point
             UpdateExitWormholeFX();
 
+            // The fading tunnel follows the ship to the exit, then lets go of the sun
+            if (_exitBridge)
+            {
+                float bridge = elapsedSeconds / JUMP_OUT_WIPE_DELAY_SECONDS;
+                if (bridge >= 1f || !IsLocalPlayerOnboard())
+                {
+                    _exitBridge = false;
+                    StopTransitParticles();
+                    HyperspaceSunManager.Instance.ReleaseSuppression(this, false);
+                }
+                else
+                {
+                    UpdateTransitTunnelFX(false);
+                }
+            }
+
             // 0s - 2s: Cloud forms and tears open at destination (ship hidden)
             // 2s - 16s (14s duration): Ship micro-teleports forward out of cloud & reveals mesh
             if (stateElapsedTicks == 60)
@@ -1483,6 +1588,7 @@ namespace WarpDriveMod
 
         private void FinishJump()
         {
+            _exitBridge = false;
             RestoreAllBlocksVisibility();
             SetGridInvincibility(false);
             ClearPhysicsVelocities();
@@ -2797,50 +2903,19 @@ namespace WarpDriveMod
             catch (Exception) { }
         }
 
-        private void StartTransitTunnelFX()
+        /// <summary>Opens the hyperspace view if it is not running yet (so the one started at the portal carries on into transit).</summary>
+        private void StartTransitTunnelFX(bool playLoop = true)
         {
-            // Only spawn tunnel visuals and audio if the local player is actually aboard the ship
-            // (matches HyperspaceSystem.StartTunnelParticle which calls IsLocalPlayerOnboard)
+            // Only for the ship the local player is actually aboard
             if (MyAPIGateway.Utilities.IsDedicated || GridSystem?.mainGrid == null) return;
             if (!IsLocalPlayerOnboard()) return;
 
             try
             {
-                StopTransitParticles();
+                AimTunnel();
 
-                var mainGrid = GridSystem.mainGrid;
-                MatrixD gridMatrix = mainGrid.WorldMatrix;
-                Vector3D forward = JumpDirection.LengthSquared() > 0.001 ? JumpDirection : gridMatrix.Forward;
-                Vector3D origin = mainGrid.PositionComp.WorldAABB.Center;
-
-                double halfExtents = mainGrid.PositionComp.WorldAABB.HalfExtents.AbsMax();
-                double forwardOffset = Math.Max(halfExtents * 6.0, 160.0);
-                Vector3D effectOffset = forward * forwardOffset;
-                Vector3D frontOrigin = origin + effectOffset;
-                Vector3D rearOrigin = origin - effectOffset;
-
-                MatrixD frontDir = MatrixD.CreateWorld(frontOrigin, -forward, gridMatrix.Up);
-                MatrixD rearDir = MatrixD.CreateWorld(rearOrigin, forward, gridMatrix.Up);
-
-                var iGrid = mainGrid as IMyCubeGrid;
-                float gridWidth = iGrid != null && iGrid.LocalAABB.Width > iGrid.LocalAABB.Height ? iGrid.LocalAABB.Width : (iGrid != null ? iGrid.LocalAABB.Height : 50f);
-                float scale = MathHelper.Clamp(gridWidth / 20f, 5.0f, 15.0f);
-
-                // Front tunnel cone
-                if (!MyParticlesManager.TryCreateParticleEffect("WarpTunnel_L", ref frontDir, ref frontOrigin, uint.MaxValue, out tunnelParticleFront))
-                {
-                    MyParticlesManager.TryCreateParticleEffect("WarpTunnel", ref frontDir, ref frontOrigin, uint.MaxValue, out tunnelParticleFront);
-                }
-                if (tunnelParticleFront != null)
-                    tunnelParticleFront.UserScale = scale;
-
-                // Rear mirrored tunnel cone
-                if (!MyParticlesManager.TryCreateParticleEffect("WarpTunnel_L", ref rearDir, ref rearOrigin, uint.MaxValue, out tunnelParticleRear))
-                {
-                    MyParticlesManager.TryCreateParticleEffect("WarpTunnel", ref rearDir, ref rearOrigin, uint.MaxValue, out tunnelParticleRear);
-                }
-                if (tunnelParticleRear != null)
-                    tunnelParticleRear.UserScale = scale;
+                if (!playLoop)
+                    return;
 
                 // Looping hyperspace audio — anchor to camera so extreme speeds don't outrun sound
                 if (transitSound == null)
@@ -2853,7 +2928,7 @@ namespace WarpDriveMod
 
                 Vector3D soundAnchor = (MyAPIGateway.Session?.Camera != null)
                     ? MyAPIGateway.Session.Camera.Position
-                    : origin;
+                    : GridSystem.mainGrid.PositionComp.WorldAABB.Center;
 
                 transitSound.SetPosition(soundAnchor);
                 transitSound.SetVelocity(Vector3.Zero);
@@ -2861,6 +2936,20 @@ namespace WarpDriveMod
                 transitSound.VolumeMultiplier = 1f;
             }
             catch (Exception) { }
+        }
+
+        /// <summary>Keeps the tunnel on the ship and pointed along the jump, opening it if it is not running.</summary>
+        private void AimTunnel()
+        {
+            var mainGrid = GridSystem?.mainGrid;
+            if (mainGrid == null)
+                return;
+
+            MatrixD matrix = HyperspaceSystem.TunnelMatrix(mainGrid, JumpDirection, mainGrid.WorldMatrix.Up);
+            if (tunnelParticle == null)
+                tunnelParticle = HyperspaceSystem.SpawnTunnelParticle(mainGrid, matrix);
+            else
+                tunnelParticle.WorldMatrix = matrix;
         }
 
         private void UpdateTransitTunnelFX(bool playTransitLoop = true)
@@ -2873,44 +2962,19 @@ namespace WarpDriveMod
                 {
                     transitSound.StopSound(true);
                 }
-                if (tunnelParticleFront != null && !tunnelParticleFront.IsStopped)
-                    tunnelParticleFront.Stop();
-                if (tunnelParticleRear != null && !tunnelParticleRear.IsStopped)
-                    tunnelParticleRear.Stop();
+                StopTransitParticles();
                 return;
             }
 
             try
             {
-                var mainGrid = GridSystem.mainGrid;
-                MatrixD gridMatrix = mainGrid.WorldMatrix;
-                Vector3D forward = JumpDirection.LengthSquared() > 0.001 ? JumpDirection : gridMatrix.Forward;
-                Vector3D origin = mainGrid.PositionComp.WorldAABB.Center;
-
-                double halfExtents = mainGrid.PositionComp.WorldAABB.HalfExtents.AbsMax();
-                double forwardOffset = Math.Max(halfExtents * 6.0, 160.0);
-                Vector3D effectOffset = forward * forwardOffset;
-                Vector3D frontOrigin = origin + effectOffset;
-                Vector3D rearOrigin = origin - effectOffset;
-
-                MatrixD frontDir = MatrixD.CreateWorld(frontOrigin, -forward, gridMatrix.Up);
-                MatrixD rearDir = MatrixD.CreateWorld(rearOrigin, forward, gridMatrix.Up);
-
-                if (tunnelParticleFront != null && !tunnelParticleFront.IsStopped)
-                {
-                    tunnelParticleFront.WorldMatrix = frontDir;
-                }
-
-                if (tunnelParticleRear != null && !tunnelParticleRear.IsStopped)
-                {
-                    tunnelParticleRear.WorldMatrix = rearDir;
-                }
+                AimTunnel();   // opens it again if the pilot came back aboard mid-jump
 
                 if (transitSound != null)
                 {
                     Vector3D soundAnchor = (MyAPIGateway.Session?.Camera != null)
                         ? MyAPIGateway.Session.Camera.Position
-                        : origin;
+                        : GridSystem.mainGrid.PositionComp.WorldAABB.Center;
 
                     transitSound.SetPosition(soundAnchor);
                     transitSound.SetVelocity(Vector3.Zero);
@@ -2944,20 +3008,11 @@ namespace WarpDriveMod
 
         private void StopTransitParticles()
         {
-            try
+            if (tunnelParticle != null)
             {
-                if (tunnelParticleFront != null)
-                {
-                    tunnelParticleFront.Stop();
-                    tunnelParticleFront = null;
-                }
-                if (tunnelParticleRear != null)
-                {
-                    tunnelParticleRear.Stop();
-                    tunnelParticleRear = null;
-                }
+                tunnelParticle.Stop(false);   // the last streaks fly out
+                tunnelParticle = null;
             }
-            catch (Exception) { }
         }
 
         private void StopParticles()
@@ -3012,378 +3067,6 @@ namespace WarpDriveMod
                 }
             }
             catch (Exception) { }
-        }
-
-        private void DrawHyperspaceBackdrop()
-        {
-            if (MyAPIGateway.Utilities.IsDedicated || GridSystem?.mainGrid == null)
-                return;
-
-            try
-            {
-                var controller = MyAPIGateway.Session?.CameraController;
-                if (controller == null)
-                    return;
-
-                // Allow cockpits, characters on the ship, and camera blocks (nose camera, docking cams, etc.)
-                bool isValidView = (controller is IMyCockpit) || (controller is IMyCharacter) || (controller is Sandbox.ModAPI.Ingame.IMyCameraBlock);
-                if (!isValidView)
-                {
-                    var cubeBlock = controller as VRage.Game.ModAPI.IMyCubeBlock;
-                    if (cubeBlock != null && GridSystem.gridGroup != null)
-                    {
-                        var playerGrid = cubeBlock.CubeGrid;
-                        foreach (var g in GridSystem.gridGroup)
-                        {
-                            if (g != null && g.EntityId == playerGrid.EntityId)
-                            {
-                                isValidView = true;
-                                break;
-                            }
-                        }
-                    }
-                }
-
-                if (!isValidView)
-                    return;
-
-                var mainGrid = GridSystem.mainGrid;
-                MatrixD gridMatrix = mainGrid.WorldMatrix;
-                Vector3D center = mainGrid.PositionComp.WorldAABB.Center;
-
-                double halfExtents = mainGrid.PositionComp.WorldAABB.HalfExtents.AbsMax();
-                double D = Math.Max(halfExtents * 14.0, 750.0);
-
-                Vector3D f = gridMatrix.Forward * D;
-                Vector3D r = gridMatrix.Right * D;
-                Vector3D u = gridMatrix.Up * D;
-
-                Vector4 color = SkyColorVec4;
-
-                // 1. Forward Face
-                MyQuadD qFwd;
-                qFwd.Point0 = (center + f) - r - u;
-                qFwd.Point1 = (center + f) + r - u;
-                qFwd.Point2 = (center + f) + r + u;
-                qFwd.Point3 = (center + f) - r + u;
-                Vector3D nFwd = -gridMatrix.Forward;
-                MyTransparentGeometry.AddQuad(SkyMaterial, ref qFwd, color, ref nFwd);
-
-                // 2. Backward Face
-                MyQuadD qBack;
-                qBack.Point0 = (center - f) + r - u;
-                qBack.Point1 = (center - f) - r - u;
-                qBack.Point2 = (center - f) - r + u;
-                qBack.Point3 = (center - f) + r + u;
-                Vector3D nBack = gridMatrix.Forward;
-                MyTransparentGeometry.AddQuad(SkyMaterial, ref qBack, color, ref nBack);
-
-                // 3. Left Face
-                MyQuadD qLeft;
-                qLeft.Point0 = (center - r) - f - u;
-                qLeft.Point1 = (center - r) + f - u;
-                qLeft.Point2 = (center - r) + f + u;
-                qLeft.Point3 = (center - r) - f + u;
-                Vector3D nLeft = gridMatrix.Right;
-                MyTransparentGeometry.AddQuad(SkyMaterial, ref qLeft, color, ref nLeft);
-
-                // 4. Right Face
-                MyQuadD qRight;
-                qRight.Point0 = (center + r) + f - u;
-                qRight.Point1 = (center + r) - f - u;
-                qRight.Point2 = (center + r) - f + u;
-                qRight.Point3 = (center + r) + f + u;
-                Vector3D nRight = -gridMatrix.Right;
-                MyTransparentGeometry.AddQuad(SkyMaterial, ref qRight, color, ref nRight);
-
-                // 5. Top Face
-                MyQuadD qTop;
-                qTop.Point0 = (center + u) - r - f;
-                qTop.Point1 = (center + u) + r - f;
-                qTop.Point2 = (center + u) + r + f;
-                qTop.Point3 = (center + u) - r + f;
-                Vector3D nTop = -gridMatrix.Up;
-                MyTransparentGeometry.AddQuad(SkyMaterial, ref qTop, color, ref nTop);
-
-                // 6. Bottom Face
-                MyQuadD qBottom;
-                qBottom.Point0 = (center - u) - r + f;
-                qBottom.Point1 = (center - u) + r + f;
-                qBottom.Point2 = (center - u) + r - f;
-                qBottom.Point3 = (center - u) - r - f;
-                Vector3D nBottom = gridMatrix.Up;
-                MyTransparentGeometry.AddQuad(SkyMaterial, ref qBottom, color, ref nBottom);
-            }
-            catch (Exception) { }
-        }
-
-        #endregion
-
-        #region HUD Guiding Reticle (Matches HyperspaceSystem.DrawTargetReticle)
-
-        public void DrawTargetReticle()
-        {
-            if (MyAPIGateway.Utilities.IsDedicated || MyAPIGateway.Session?.Camera == null)
-                return;
-
-            EnsureGridSystem();
-
-            var mainGrid = GridSystem?.mainGrid;
-            var cockpit = GridSystem?.FindMainCockpit();
-            if (mainGrid == null || cockpit == null) return;
-
-            var localPlayer = MyAPIGateway.Session.Player;
-            if (localPlayer == null) return;
-            var controlledBlock = (localPlayer.Controller?.ControlledEntity?.Entity as VRage.Game.ModAPI.IMyCubeBlock)
-                               ?? (localPlayer.Character?.Parent as VRage.Game.ModAPI.IMyCubeBlock);
-            if (controlledBlock == null || controlledBlock.CubeGrid != mainGrid) return;
-
-            if (State == CapState.Transit || State == CapState.JumpOut || State == CapState.Cooldown)
-                return;
-
-            bool isGps = Mode == HyperspaceSystem.JumpMode.GpsWaypoint && SelectedGpsCoords.HasValue;
-            bool isChargingOrHolding = State == CapState.Charging || State == CapState.HoldingCharge || State == CapState.EngageRiser;
-
-            if (!isGps && !isChargingOrHolding)
-                return;
-
-            Vector3D cameraPos = MyAPIGateway.Session.Camera.Position;
-            MatrixD cameraMatrix = MyAPIGateway.Session.Camera.WorldMatrix;
-
-            Vector3D targetDir = Vector3D.Zero;
-            double targetDist = 0.0;
-
-            if (isGps && SelectedGpsCoords.HasValue)
-            {
-                Vector3D gpsCoord = SelectedGpsCoords.Value;
-                targetDist = Vector3D.Distance(cameraPos, gpsCoord);
-                targetDir = Vector3D.Normalize(gpsCoord - cameraPos);
-            }
-            else
-            {
-                targetDir = JumpDirection.LengthSquared() > 0.001 ? JumpDirection : cockpit.WorldMatrix.Forward;
-                targetDist = JumpDistance;
-            }
-
-            if (targetDir.LengthSquared() < 0.001) return;
-
-            if (Vector3D.Dot(cameraMatrix.Forward, targetDir) <= 0.05)
-                return;
-
-            const double HUD_DIST = 60.0;
-            Vector3D centerPos = cameraPos + (targetDir * HUD_DIST);
-
-            float innerRadius = (float)(HUD_DIST * Math.Tan(MathHelper.ToRadians(ALIGNMENT_TOLERANCE_DEG)));
-            float outerRadius = innerRadius * 1.20f;
-
-            double dot = MathHelper.Clamp(Vector3D.Dot(cockpit.WorldMatrix.Forward, targetDir), -1.0, 1.0);
-            double angleDeg = MathHelper.ToDegrees(Math.Acos(dot));
-            bool isAligned = angleDeg <= ALIGNMENT_TOLERANCE_DEG;
-
-            Vector4 outerColor = isAligned 
-                ? new Vector4(0.85f, 1.0f, 0.20f, 0.95f) 
-                : new Vector4(1.0f, 0.90f, 0.15f, 0.85f);
-
-            Vector4 innerColor = isAligned
-                ? new Vector4(0.90f, 1.0f, 0.35f, 0.95f)
-                : new Vector4(1.0f, 0.72f, 0.08f, 0.65f);
-
-            Vector3D reticleFwd = targetDir;
-            Vector3D reticleUp = cameraMatrix.Up;
-            Vector3D reticleRight = Vector3D.Cross(reticleFwd, reticleUp);
-            if (reticleRight.LengthSquared() < 0.001) reticleRight = cameraMatrix.Right;
-            reticleRight.Normalize();
-            reticleUp = Vector3D.Cross(reticleRight, reticleFwd);
-            reticleUp.Normalize();
-
-            const float LINE_THICKNESS = 0.06f;
-
-            const int INNER_SEGMENTS = 24;
-            float inStep = MathHelper.TwoPi / INNER_SEGMENTS;
-            for (int i = 0; i < INNER_SEGMENTS; i++)
-            {
-                float a1 = i * inStep;
-                float a2 = (i + 1) * inStep;
-                Vector3D p0 = centerPos + (reticleRight * (Math.Cos(a1) * innerRadius)) + (reticleUp * (Math.Sin(a1) * innerRadius));
-                Vector3D p1 = centerPos + (reticleRight * (Math.Cos(a2) * innerRadius)) + (reticleUp * (Math.Sin(a2) * innerRadius));
-                MyTransparentGeometry.AddLineBillboard(SkyMaterial, innerColor, p0, (Vector3)(p1 - p0), 1f, LINE_THICKNESS * 0.75f);
-            }
-
-            const int DASH_COUNT = 12;
-            float stepAngle = MathHelper.TwoPi / DASH_COUNT;
-            float dashFraction = 0.65f;
-
-            for (int i = 0; i < DASH_COUNT; i++)
-            {
-                float a1 = i * stepAngle;
-                float a2 = a1 + (stepAngle * dashFraction);
-                float mid = (a1 + a2) * 0.5f;
-
-                Vector3D p0 = centerPos + (reticleRight * (Math.Cos(a1) * outerRadius)) + (reticleUp * (Math.Sin(a1) * outerRadius));
-                Vector3D p1 = centerPos + (reticleRight * (Math.Cos(mid) * outerRadius)) + (reticleUp * (Math.Sin(mid) * outerRadius));
-                Vector3D p2 = centerPos + (reticleRight * (Math.Cos(a2) * outerRadius)) + (reticleUp * (Math.Sin(a2) * outerRadius));
-
-                MyTransparentGeometry.AddLineBillboard(SkyMaterial, outerColor, p0, (Vector3)(p1 - p0), 1f, LINE_THICKNESS);
-                MyTransparentGeometry.AddLineBillboard(SkyMaterial, outerColor, p1, (Vector3)(p2 - p1), 1f, LINE_THICKNESS);
-            }
-
-            float innerTick = outerRadius * 1.06f;
-            float outerTick = outerRadius * 1.22f;
-
-            Vector3D tTop0 = centerPos + (reticleUp * innerTick);
-            Vector3D tTop1 = centerPos + (reticleUp * outerTick);
-            MyTransparentGeometry.AddLineBillboard(SkyMaterial, outerColor, tTop0, (Vector3)(tTop1 - tTop0), 1f, LINE_THICKNESS);
-
-            Vector3D tBot0 = centerPos - (reticleUp * innerTick);
-            Vector3D tBot1 = centerPos - (reticleUp * outerTick);
-            MyTransparentGeometry.AddLineBillboard(SkyMaterial, outerColor, tBot0, (Vector3)(tBot1 - tBot0), 1f, LINE_THICKNESS);
-
-            Vector3D tRight0 = centerPos + (reticleRight * innerTick);
-            Vector3D tRight1 = centerPos + (reticleRight * outerTick);
-            MyTransparentGeometry.AddLineBillboard(SkyMaterial, outerColor, tRight0, (Vector3)(tRight1 - tRight0), 1f, LINE_THICKNESS);
-
-            Vector3D tLeft0 = centerPos - (reticleRight * innerTick);
-            Vector3D tLeft1 = centerPos - (reticleRight * outerTick);
-            MyTransparentGeometry.AddLineBillboard(SkyMaterial, outerColor, tLeft0, (Vector3)(tLeft1 - tLeft0), 1f, LINE_THICKNESS);
-
-            float centerTick = innerRadius * 0.12f;
-            Vector3D cTop = centerPos + (reticleUp * centerTick);
-            Vector3D cBot = centerPos - (reticleUp * centerTick);
-            Vector3D cR = centerPos + (reticleRight * centerTick);
-            Vector3D cL = centerPos - (reticleRight * centerTick);
-            MyTransparentGeometry.AddLineBillboard(SkyMaterial, outerColor, cBot, (Vector3)(cTop - cBot), 1f, LINE_THICKNESS * 0.70f);
-            MyTransparentGeometry.AddLineBillboard(SkyMaterial, outerColor, cL, (Vector3)(cR - cL), 1f, LINE_THICKNESS * 0.70f);
-
-            string distText;
-            if (targetDist < 1000.0)
-                distText = string.Format("{0:F1}m", targetDist);
-            else if (targetDist < 1000000.0)
-                distText = string.Format("{0:F1}km", targetDist / 1000.0);
-            else
-                distText = string.Format("{0:F1}Mm", targetDist / 1000000.0);
-
-            Vector3D textCenterPos = centerPos - (reticleUp * (outerRadius * 1.50f));
-            Draw3DStrokeText(distText, textCenterPos, reticleRight, reticleUp, outerColor, innerRadius * 0.22f);
-        }
-
-        private void Draw3DStrokeText(string text, Vector3D origin, Vector3D right, Vector3D up, Vector4 color, float charHeight)
-        {
-            float baseWidth = charHeight * 0.58f;
-            float thickness = charHeight * 0.08f;
-            float charGap = charHeight * 0.16f;
-
-            float totalWidth = 0f;
-            for (int i = 0; i < text.Length; i++)
-            {
-                float w = GetCharWidth(text[i], baseWidth);
-                totalWidth += w;
-                if (i < text.Length - 1) totalWidth += charGap;
-            }
-
-            Vector3D curPos = origin - (right * (totalWidth * 0.5f));
-
-            for (int i = 0; i < text.Length; i++)
-            {
-                char c = text[i];
-                float w = GetCharWidth(c, baseWidth);
-                DrawStrokeChar(c, curPos, right, up, color, w, charHeight, thickness);
-                curPos += right * (w + charGap);
-            }
-        }
-
-        private float GetCharWidth(char c, float baseWidth)
-        {
-            switch (c)
-            {
-                case '.':
-                    return baseWidth * 0.25f;
-                case '1':
-                    return baseWidth * 0.40f;
-                case 'm':
-                    return baseWidth * 1.15f;
-                case 'M':
-                    return baseWidth * 1.05f;
-                case 'k':
-                case 'K':
-                    return baseWidth * 0.85f;
-                default:
-                    return baseWidth;
-            }
-        }
-
-        private void DrawStrokeChar(char c, Vector3D pos, Vector3D right, Vector3D up, Vector4 color, float w, float h, float th)
-        {
-            Vector3D pBL = pos;
-            Vector3D pBR = pos + (right * w);
-            Vector3D pML = pos + (up * (h * 0.5f));
-            Vector3D pMR = pML + (right * w);
-            Vector3D pTL = pos + (up * h);
-            Vector3D pTR = pTL + (right * w);
-
-            Action<Vector3D, Vector3D> line = (pA, pB) =>
-            {
-                MyTransparentGeometry.AddLineBillboard(SkyMaterial, color, pA, (Vector3)(pB - pA), 1f, th);
-            };
-
-            switch (c)
-            {
-                case '0':
-                    line(pBL, pTL); line(pTL, pTR); line(pTR, pBR); line(pBR, pBL); line(pBL, pTR);
-                    break;
-                case '1':
-                    line(pos + (right * (w * 0.5f)), pos + (right * (w * 0.5f)) + (up * h));
-                    break;
-                case '2':
-                    line(pTL, pTR); line(pTR, pMR); line(pMR, pML); line(pML, pBL); line(pBL, pBR);
-                    break;
-                case '3':
-                    line(pTL, pTR); line(pTR, pBR); line(pBR, pBL); line(pML, pMR);
-                    break;
-                case '4':
-                    line(pTL, pML); line(pML, pMR); line(pTR, pBR);
-                    break;
-                case '5':
-                    line(pTR, pTL); line(pTL, pML); line(pML, pMR); line(pMR, pBR); line(pBR, pBL);
-                    break;
-                case '6':
-                    line(pTR, pTL); line(pTL, pBL); line(pBL, pBR); line(pBR, pMR); line(pMR, pML);
-                    break;
-                case '7':
-                    line(pTL, pTR); line(pTR, pBL);
-                    break;
-                case '8':
-                    line(pTL, pTR); line(pTR, pBR); line(pBR, pBL); line(pBL, pTL); line(pML, pMR);
-                    break;
-                case '9':
-                    line(pBL, pBR); line(pBR, pTR); line(pTR, pTL); line(pTL, pML); line(pML, pMR);
-                    break;
-                case '.':
-                    line(pos + (right * (w * 0.5f)), pos + (right * (w * 0.5f)) + (up * (h * 0.12f)));
-                    break;
-                case 'k':
-                case 'K':
-                    line(pBL, pTL);
-                    line(pML, pos + (right * w) + (up * (h * 0.85f)));
-                    line(pML, pBR);
-                    break;
-                case 'm':
-                    float mh = h * 0.62f;
-                    Vector3D mMidB = pos + (right * (w * 0.5f));
-                    Vector3D mMidT = mMidB + (up * mh);
-                    Vector3D mLT = pos + (up * mh);
-                    Vector3D mRT = pos + (right * w) + (up * mh);
-                    line(pos, mLT);
-                    line(mLT, mRT);
-                    line(mMidB, mMidT);
-                    line(pos + (right * w), mRT);
-                    break;
-                case 'M':
-                    line(pBL, pTL);
-                    line(pTL, pos + (right * (w * 0.5f)) + (up * (h * 0.35f)));
-                    line(pos + (right * (w * 0.5f)) + (up * (h * 0.35f)), pTR);
-                    line(pTR, pBR);
-                    break;
-            }
         }
 
         #endregion

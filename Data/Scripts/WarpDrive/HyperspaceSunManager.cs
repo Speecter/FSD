@@ -11,8 +11,11 @@ namespace WarpDriveMod
     /// <summary>
     /// Purely client-side manager that eliminates sunlight, shadows, and visual sun glare during Hyperspace transit.
     /// Sunlight & shadows are extinguished via WeatherEffects.SunIntensityOverride.
-    /// Visual sun flare is fought by dynamically positioning the sun directly behind the local player's active camera
-    /// (cockpit, 3rd person, character, or camera block) using the Day/Night rotation cycle.
+    /// The sun disc is moved out of sight by turning the Day/Night clock: the game turns the sun about the axis
+    /// normalize(Up - (Up.base) base) of its base direction (the vanilla default world gives exactly the old hard-coded axis), so the
+    /// orbit's axis is known from the base direction and no read-back is needed after the jump starts (the game's reported sun direction
+    /// lags behind the clock). Turns are measured from where the sun is when the jump starts, at that moment's clock time.
+    /// The sun is placed on the point of that circle farthest from where the camera looks.
     /// Spectator camera (F8) is completely unaffected, retaining normal sun position and lighting.
     /// </summary>
     public class HyperspaceSunManager
@@ -22,18 +25,15 @@ namespace WarpDriveMod
 
         private readonly List<object> _activeSources = new List<object>();
 
-        // Space Engineers standard celestial orientation basis
-        private static readonly Vector3 DefaultSunRotationAxis = new Vector3(-0.3420637f, 0.7044079f, 0.6219341f);
-        private static readonly Vector3 DefaultBaseSunDirection = new Vector3(0.3394673f, 0.7097954f, -0.6172134f);
-
-        private Vector3 _sunRotationAxis;
-        private Vector3 _lastObservedSunDir = Vector3.Zero;
+        private const float SUPPRESSED_INTENSITY = 0.0001f;
+        private const float DEFAULT_SUN_INTENSITY = 50f;      // the vanilla environment's sun; the fade-in ends by handing back to the world's own value
+        private const float FADE_IN_SECONDS = 1f;
 
         private bool _isSuppressed = false;
         private bool _sunMoved = false;
         private bool _originalSunRotationEnabled = false;
         private float _originalSunTime = 0f;
-        private Vector3 _originalSunDir = Vector3.Zero;
+        private TimeSpan _suppressedAt;
         private float _dayLength = 120f;
         private bool _isSpectatorActive = false;
         private bool _needsInitialSet = false;
@@ -41,15 +41,22 @@ namespace WarpDriveMod
         private bool _hasCommanded = false;
         private int _lastCommandTick = 0;
 
+        // The orbit: the sun direction at clock time t is the base direction turned by 2 pi t / day length about the axis
+        private bool _orbitKnown;
+        private Vector3 _baseDir;
+        private Vector3 _axis;
+
+        // Where the sun is when the jump starts and the clock time then: every re-aim turns the clock relative to this
+        private Vector3 _refDir;
+        private float _refTime;
+
+        private bool _fading;
+        private float _fadeTime;
+
         public bool IsSuppressed => _isSuppressed;
 
         public void Init(string modPath)
         {
-            if (MyAPIGateway.Utilities.IsDedicated)
-                return;
-
-            _sunRotationAxis = DefaultSunRotationAxis;
-            _sunRotationAxis.Normalize();
         }
 
         public void RequestSuppression(object source, bool isLocalPlayerOnboard)
@@ -75,7 +82,7 @@ namespace WarpDriveMod
 
             if (_activeSources.Count == 0 && _isSuppressed)
             {
-                DeactivateSuppression();
+                DeactivateSuppression(instant);
             }
         }
 
@@ -85,20 +92,14 @@ namespace WarpDriveMod
             _needsInitialSet = true;
             _hasCommanded = false;
             _isSpectatorActive = false;
+            _fading = false;
 
             try
             {
                 // Capture exact initial sun state before any modification
                 _originalSunTime = MyVisualScriptLogicProvider.SunRotationGetCurrentTime();
-                _originalSunDir = MyVisualScriptLogicProvider.GetSunDirection();
-                if (_originalSunDir.LengthSquared() > 1e-4f)
-                {
-                    _originalSunDir.Normalize();
-                }
-                else
-                {
-                    _originalSunDir = DefaultBaseSunDirection;
-                }
+                Vector3 currentDir = MyVisualScriptLogicProvider.GetSunDirection();
+                _suppressedAt = MyAPIGateway.Session != null ? MyAPIGateway.Session.ElapsedPlayTime : TimeSpan.Zero;
 
                 _originalSunRotationEnabled = MyAPIGateway.Session?.SessionSettings != null && MyAPIGateway.Session.SessionSettings.EnableSunRotation;
 
@@ -111,14 +112,32 @@ namespace WarpDriveMod
                 if (_dayLength <= 0.001f)
                     _dayLength = 120f;
 
+                // Once per world: the sun has not been moved by us yet, so the reported direction is trustworthy
+                if (currentDir.LengthSquared() > 1e-4f)
+                {
+                    if (!_orbitKnown)
+                        LearnOrbit(Vector3.Normalize(currentDir), _originalSunRotationEnabled ? _originalSunTime : 0f);
+
+                    // The reference for this jump: the sun as it is now, at the current clock time (projected onto the orbit's plane)
+                    Vector3 seen = Vector3.Normalize(currentDir);
+                    Vector3 onPlane = seen - Vector3.Dot(seen, _axis) * _axis;
+                    _refDir = onPlane.LengthSquared() > 1e-4f ? Vector3.Normalize(onPlane) : _baseDir;
+                    _refTime = _originalSunTime;
+                }
+                else
+                {
+                    _refDir = _baseDir;
+                    _refTime = _originalSunTime;
+                }
+
                 // Extinguish directional sunlight and shadows
                 if (MyAPIGateway.Session?.WeatherEffects != null)
                 {
-                    MyAPIGateway.Session.WeatherEffects.SunIntensityOverride = 0.0001f;
+                    MyAPIGateway.Session.WeatherEffects.SunIntensityOverride = SUPPRESSED_INTENSITY;
                 }
 
                 // Immediately place sun behind camera on this very frame before rendering
-                UpdateSunPositionAndLighting();
+                UpdateSunPositionAndLighting(0f);
             }
             catch (Exception ex)
             {
@@ -126,16 +145,19 @@ namespace WarpDriveMod
             }
         }
 
-        private void DeactivateSuppression()
+        private void DeactivateSuppression(bool instant)
         {
             _isSuppressed = false;
 
             try
             {
-                // Restore original sun time
+                // Restore the clock where it would be now: a moving sun carries on from where it was plus the time spent in the tunnel
                 if (_sunMoved)
                 {
-                    MyVisualScriptLogicProvider.SunRotationSetTime(_originalSunTime);
+                    float restoreTime = _originalSunTime;
+                    if (_originalSunRotationEnabled && MyAPIGateway.Session != null)
+                        restoreTime += (float)(MyAPIGateway.Session.ElapsedPlayTime - _suppressedAt).TotalSeconds;
+                    MyVisualScriptLogicProvider.SunRotationSetTime(WrapTime(restoreTime));
                     _sunMoved = false;
                 }
 
@@ -145,10 +167,18 @@ namespace WarpDriveMod
                     MyVisualScriptLogicProvider.SunRotationEnabled(false);
                 }
 
-                // Restore sunlight and shadows
+                // Restore sunlight and shadows: at once after an emergency drop, faded in over a second after a normal arrival
                 if (MyAPIGateway.Session?.WeatherEffects != null && MyAPIGateway.Session.WeatherEffects.SunIntensityOverride.HasValue)
                 {
-                    MyAPIGateway.Session.WeatherEffects.SunIntensityOverride = null;
+                    if (instant)
+                    {
+                        MyAPIGateway.Session.WeatherEffects.SunIntensityOverride = null;
+                    }
+                    else
+                    {
+                        _fading = true;
+                        _fadeTime = 0f;
+                    }
                 }
             }
             catch (Exception ex)
@@ -164,11 +194,11 @@ namespace WarpDriveMod
 
             if (!_isSuppressed)
             {
-                TrackSunAxis();
+                UpdateFade();
                 return;
             }
 
-            UpdateSunPositionAndLighting();
+            UpdateSunPositionAndLighting(1f / 60f);
         }
 
         public void UpdateDraw()
@@ -177,65 +207,111 @@ namespace WarpDriveMod
                 return;
 
             // Catch camera switches immediately on draw frames (e.g. 1st <-> 3rd person)
-            UpdateSunPositionAndLighting();
+            UpdateSunPositionAndLighting(0f);
+        }
+
+        private void UpdateFade()
+        {
+            if (!_fading)
+                return;
+
+            var weather = MyAPIGateway.Session?.WeatherEffects;
+            _fadeTime += 1f / 60f;
+            if (weather == null || _fadeTime >= FADE_IN_SECONDS)
+            {
+                _fading = false;
+                if (weather != null)
+                    weather.SunIntensityOverride = null;
+                return;
+            }
+
+            float t = _fadeTime / FADE_IN_SECONDS;
+            weather.SunIntensityOverride = SUPPRESSED_INTENSITY + DEFAULT_SUN_INTENSITY * t * t;
+        }
+
+        private float WrapTime(float time)
+        {
+            while (time >= _dayLength) time -= _dayLength;
+            while (time < 0f) time += _dayLength;
+            return time;
+        }
+
+        // ------------------------------------------------------------------ the orbit
+
+        /// <summary>The game's rotation axis for a base sun direction: Up made perpendicular to it (Left when the sun is nearly overhead).</summary>
+        private static Vector3 AxisFor(Vector3 baseDir)
+        {
+            Vector3 reference = Math.Abs(Vector3.Dot(baseDir, Vector3.Up)) > 0.95f ? Vector3.Left : Vector3.Up;
+            Vector3 axis = reference - Vector3.Dot(reference, baseDir) * baseDir;
+            return Vector3.Normalize(axis);
+        }
+
+        private static Vector3 Rotate(Vector3 v, Vector3 axis, double angle)
+        {
+            return Vector3.Transform(v, Matrix.CreateFromAxisAngle(axis, (float)angle));
         }
 
         /// <summary>
-        /// Passively detects the world's exact sun rotation axis from sun movement during normal flight.
+        /// Finds the base direction from the sun seen at clock time <paramref name="time"/>. Without sun rotation that is simply the
+        /// sun itself; with rotation, the base is where the sun was at time 0, so the axis that is consistent with both is searched for.
         /// </summary>
-        private void TrackSunAxis()
+        private void LearnOrbit(Vector3 seen, float time)
         {
-            try
+            double angle = 2.0 * Math.PI * time / _dayLength;
+            if (Math.Abs(angle) < 1e-4)
             {
-                Vector3 currentDir = MyVisualScriptLogicProvider.GetSunDirection();
-                if (currentDir.LengthSquared() < 1e-4f)
-                    return;
+                _baseDir = seen;
+                _axis = AxisFor(seen);
+                _orbitKnown = true;
+                return;
+            }
 
-                currentDir.Normalize();
-
-                if (_lastObservedSunDir != Vector3.Zero)
+            // The axis is perpendicular to the seen direction: try every direction around it and keep the one the game's rule reproduces
+            Vector3 p1 = Vector3.Normalize(Vector3.CalculatePerpendicularVector(seen));
+            Vector3 p2 = Vector3.Cross(seen, p1);
+            double bestError = double.MaxValue, bestPhi = 0.0;
+            for (int pass = 0; pass < 3; pass++)
+            {
+                double span = pass == 0 ? Math.PI : Math.PI / Math.Pow(60.0, pass);
+                double center = pass == 0 ? 0.0 : bestPhi;
+                for (int i = 0; i <= 120; i++)
                 {
-                    float dot = MathHelper.Clamp(Vector3.Dot(_lastObservedSunDir, currentDir), -1f, 1f);
-                    float angleDiff = (float)Math.Acos(dot);
-                    // When sun has moved at least 0.5 degrees (~0.0087 rad)
-                    if (angleDiff > 0.0087f)
+                    double phi = center - span + 2.0 * span * i / 120.0;
+                    Vector3 axis = p1 * (float)Math.Cos(phi) + p2 * (float)Math.Sin(phi);
+                    Vector3 baseDir = Rotate(seen, axis, -angle);
+                    double error = (AxisFor(baseDir) - axis).LengthSquared();
+                    if (error < bestError)
                     {
-                        Vector3 computedAxis = Vector3.Cross(_lastObservedSunDir, currentDir);
-                        if (computedAxis.LengthSquared() > 1e-4f)
-                        {
-                            computedAxis.Normalize();
-                            // Keep consistent orientation relative to standard SE axis
-                            if (Vector3.Dot(computedAxis, DefaultSunRotationAxis) < 0f)
-                                computedAxis = -computedAxis;
-
-                            _sunRotationAxis = computedAxis;
-                        }
-
-                        _lastObservedSunDir = currentDir;
+                        bestError = error;
+                        bestPhi = phi;
                     }
                 }
-                else
-                {
-                    _lastObservedSunDir = currentDir;
-                }
             }
-            catch
+
+            Vector3 found = p1 * (float)Math.Cos(bestPhi) + p2 * (float)Math.Sin(bestPhi);
+            if (bestError < 1e-4)
             {
+                _axis = found;
+                _baseDir = Rotate(seen, found, -angle);
             }
+            else
+            {
+                // No consistent orbit (unexpected clock offset): treat the sun as seen now as the base, at the current time
+                MyLog.Default.WriteLine("[HyperspaceSunManager] sun orbit not consistent with the clock (error " + bestError.ToString("0.000000") + "); assuming the current sun is the base");
+                _axis = AxisFor(seen);
+                _baseDir = Rotate(seen, _axis, -angle);
+            }
+            _orbitKnown = true;
         }
 
-        private void UpdateSunPositionAndLighting()
+        // ------------------------------------------------------------------ aiming
+
+        private void UpdateSunPositionAndLighting(float dt)
         {
             if (MyAPIGateway.Session == null)
                 return;
 
-            var controller = MyAPIGateway.Session.CameraController;
-            bool isValidOnboardView = (controller is Sandbox.ModAPI.IMyCockpit)
-                || (controller is VRage.Game.ModAPI.IMyCharacter)
-                || (controller is Sandbox.ModAPI.Ingame.IMyCameraBlock);
-
-            bool isSpectator = MyAPIGateway.Session.IsCameraUserControlledSpectator
-                || !isValidOnboardView;
+            bool isSpectator = !LocalView.IsOnboardCamera;
 
             if (isSpectator)
             {
@@ -267,81 +343,57 @@ namespace WarpDriveMod
 
                 if (MyAPIGateway.Session.WeatherEffects != null)
                 {
-                    MyAPIGateway.Session.WeatherEffects.SunIntensityOverride = 0.0001f;
+                    MyAPIGateway.Session.WeatherEffects.SunIntensityOverride = SUPPRESSED_INTENSITY;
                 }
             }
 
             // Ensure sunlight override remains applied for onboard cameras
             if (MyAPIGateway.Session.WeatherEffects != null && !MyAPIGateway.Session.WeatherEffects.SunIntensityOverride.HasValue)
             {
-                MyAPIGateway.Session.WeatherEffects.SunIntensityOverride = 0.0001f;
+                MyAPIGateway.Session.WeatherEffects.SunIntensityOverride = SUPPRESSED_INTENSITY;
             }
 
             var camera = MyAPIGateway.Session.Camera;
-            if (camera == null)
+            if (camera == null || !_orbitKnown)
                 return;
 
             Vector3 camForward = (Vector3)camera.WorldMatrix.Forward;
             Vector3 camUp = (Vector3)camera.WorldMatrix.Up;
-            Vector3 camRight = (Vector3)camera.WorldMatrix.Right;
+            Vector3 A = _axis;
 
-            Vector3 A = _sunRotationAxis;
-
-            // Project camera forward onto the celestial plane perpendicular to the sun rotation axis
+            // The orbit is a great circle perpendicular to A: its point farthest from the line of sight is opposite to the forward
+            // direction projected onto that circle's plane
             Vector3 F_perp = camForward - Vector3.Dot(camForward, A) * A;
             Vector3 S_optimal;
-
-            float perpLenSq = F_perp.LengthSquared();
-            if (perpLenSq > 1e-4f)
+            if (F_perp.LengthSquared() > 1e-4f)
             {
-                // Optimal sun direction on the orbit circle is strictly opposite to camera forward projected onto the sun plane.
-                // This maximizes the angular distance from the player's crosshairs at ALL angles.
                 S_optimal = -Vector3.Normalize(F_perp);
             }
             else
             {
-                // Degenerate pole case: camera line of sight is precisely along the celestial rotation axis (+A or -A).
-                // In this singular case, every point on the orbit circle is 90 degrees from the camera forward vector.
-                // Project the camera DOWN vector onto the sun plane, pushing the sun deep below the cockpit dashboard.
-                Vector3 Down = -camUp;
-                Vector3 Down_perp = Down - Vector3.Dot(Down, A) * A;
-                if (Down_perp.LengthSquared() > 1e-4f)
-                {
-                    S_optimal = Vector3.Normalize(Down_perp);
-                }
-                else
-                {
-                    Vector3 fallback = Vector3.Cross(A, camRight);
-                    if (fallback.LengthSquared() > 1e-4f)
-                        S_optimal = Vector3.Normalize(fallback);
-                    else
-                        S_optimal = Vector3.Normalize(Vector3.Cross(A, Vector3.UnitY));
-                }
+                // Looking straight along the axis: every point is 90 degrees off, push the sun below the dashboard
+                Vector3 down = -camUp;
+                Vector3 down_perp = down - Vector3.Dot(down, A) * A;
+                S_optimal = down_perp.LengthSquared() > 1e-4f ? Vector3.Normalize(down_perp) : Vector3.Normalize(Vector3.CalculatePerpendicularVector(A));
             }
 
             // Pure Feed-Forward Re-Aim:
             // Compare the desired direction S_optimal against the LAST COMMANDED direction.
-            // Never read back current sun direction/time for target calculation, which eliminates
-            // stale readback feedback loops, draw-frame lag, and overshooting completely.
+            // Never read back current sun direction/time, which lags behind the clock.
             float cosErr = _hasCommanded ? MathHelper.Clamp(Vector3.Dot(_lastCommandedDir, S_optimal), -1f, 1f) : -1f;
-            int currentTick = (MyAPIGateway.Session != null) ? MyAPIGateway.Session.GameplayFrameCounter : 0;
+            int currentTick = MyAPIGateway.Session.GameplayFrameCounter;
 
             // Re-aim if uninitialized, if desired camera direction moved (> ~0.57 deg), or every 30 ticks to cancel clock drift
             if (_needsInitialSet || cosErr < 0.99995f || (currentTick - _lastCommandTick > 30))
             {
-                // Absolute angle from the captured initial reference direction _originalSunDir to S_optimal around axis A
-                float dot = MathHelper.Clamp(Vector3.Dot(_originalSunDir, S_optimal), -1f, 1f);
-                Vector3 cross = Vector3.Cross(_originalSunDir, S_optimal);
-                float sin = Vector3.Dot(cross, A);
+                // Clock time that turns the jump-start sun onto S_optimal
+                float dot = MathHelper.Clamp(Vector3.Dot(_refDir, S_optimal), -1f, 1f);
+                float sin = Vector3.Dot(Vector3.Cross(_refDir, S_optimal), A);
                 double theta = Math.Atan2(sin, dot);
                 if (theta < 0.0)
                     theta += 2.0 * Math.PI;
 
-                float targetTime = _originalSunTime + (float)(theta / (2.0 * Math.PI) * _dayLength);
-                while (targetTime >= _dayLength) targetTime -= _dayLength;
-                while (targetTime < 0f) targetTime += _dayLength;
-
-                MyVisualScriptLogicProvider.SunRotationSetTime(targetTime);
+                MyVisualScriptLogicProvider.SunRotationSetTime(WrapTime(_refTime + (float)(theta / (2.0 * Math.PI) * _dayLength)));
 
                 _lastCommandedDir = S_optimal;
                 _hasCommanded = true;
@@ -355,8 +407,11 @@ namespace WarpDriveMod
         {
             if (_isSuppressed)
             {
-                DeactivateSuppression();
+                DeactivateSuppression(true);
             }
+
+            if (_fading && MyAPIGateway.Session?.WeatherEffects != null)
+                MyAPIGateway.Session.WeatherEffects.SunIntensityOverride = null;
 
             _activeSources.Clear();
             _instance = null;

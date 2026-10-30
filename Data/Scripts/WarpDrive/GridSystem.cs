@@ -282,7 +282,37 @@ namespace WarpDriveMod
             return totalThrustCount == 0 || fwdThrustCount > 0;
         }
 
+        // The search walks every block of the group several times and counts thrusters, and the hyperspace tick asks for the cockpit
+        // a few times per ship per tick: reuse the answer for a few ticks, and drop it at once if the cached seat changes hands
+        private const int CockpitCacheTicks = 6;
+        private IMyShipController cockpitCache;
+        private bool cockpitCacheValid;
+        private bool cockpitCachePiloted;
+        private long cockpitCacheTick;
+
         public IMyShipController FindMainCockpit()
+        {
+            long now = WarpDriveSession.instance != null ? WarpDriveSession.instance.runtime : 0L;
+
+            if (cockpitCacheValid && now - cockpitCacheTick >= 0 && now - cockpitCacheTick < CockpitCacheTicks)
+            {
+                var cached = cockpitCache;
+                if (cached == null)
+                    return null;
+
+                if (!cached.Closed && cached.IsFunctional && (cached.Pilot != null || cached.IsUnderControl) == cockpitCachePiloted)
+                    return cached;
+            }
+
+            var found = FindMainCockpitUncached();
+            cockpitCache = found;
+            cockpitCacheValid = true;
+            cockpitCacheTick = now;
+            cockpitCachePiloted = found != null && (found.Pilot != null || found.IsUnderControl);
+            return found;
+        }
+
+        private IMyShipController FindMainCockpitUncached()
         {
             if (gridGroup == null || gridGroup.Count == 0)
                 return null;

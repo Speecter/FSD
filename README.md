@@ -23,6 +23,29 @@ This mod is useful for players and builders who want:
 - audio cues for charge, jump entry/exit, and supercruise gravity effects
 - customizable restrictions for gravity, enemy detection, heat, and jump delay
 
+## FSD HUD
+
+All drive feedback (supercruise, hyperspace jump, Capital FSD, fleet jump, Hyperdictor) is shown on a custom HUD instead of notifications:
+
+- a status strip at the bottom centre: phase, target, progress bar with time, capacitor, heat, range or speed, power
+- an alignment indicator around the crosshair: a ring that fills with the charge or countdown, a marker for where the target is relative to the nose, an arrow showing which way to turn, and a ping (`HudBleep`) that speeds up as you get closer
+- an event feed above the strip and a short banner for critical events (hyperdiction, emergency drop, overheat, power failure)
+- lock brackets on the selected GPS target (an arrow at the screen edge when it is off screen), and an aiming reticle for blind jumps
+- a fleet lobby panel: every ship with its readiness; the leader presses **Fleet Jump** again to engage
+- a **Jump Target** toolbar action: press it to open the target list (blind jump + your GPS points, nearest first, marked in range / too close / out of range), scroll to choose, press it again to lock
+
+**Requires the Rich HUD Master mod** (Steam Workshop id 1965654081). Add it as a required item when publishing this mod.
+
+Chat commands (per player, saved locally):
+
+- `/fsd hud on|off`
+- `/fsd hud scale 0.6-1.5`
+- `/fsd hud opacity 0.2-1`
+- `/fsd hud ping on|off`
+- `/fsd hud fx on|off` - the soft screen-edge glow during charging, cruise, hyperspace, hyperdiction and drops
+- `/fsd hud reset`
+- `/fsd perf` - how many milliseconds per tick each part of the mod takes (supercruise, hyperspace, capital FSD, hyperdiction, HUD)
+
 ## Quick start
 
 ### Install locally

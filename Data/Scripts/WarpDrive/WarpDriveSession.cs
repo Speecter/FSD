@@ -30,6 +30,7 @@ namespace WarpDriveMod
         public static MySoundPair gravityGlideOn = new MySoundPair("glide_on", true);
         public static MySoundPair gravityGlideOff = new MySoundPair("glide_off", true);
         public static MySoundPair spoolStop = new MySoundPair("ArcHudAntennaOff", true);
+        public static MySoundPair hudBleep = new MySoundPair("ArcHudBleep", true);
         public static MySoundPair hyperspaceJump = new MySoundPair("Hyperspace_jump", true);
         public static MySoundPair fsdHyperCharge = new MySoundPair("fsd_hyper_charge", true);
         public static MySoundPair engagingHyperspace = new MySoundPair("engaging_hyperspace", true);
@@ -145,6 +146,31 @@ namespace WarpDriveMod
     }
 
     [ProtoContract]
+    public class CruiseTrailEntry
+    {
+        [ProtoMember(1)]
+        public long entityId { get; set; }
+        [ProtoMember(2)]
+        public Vector3D position { get; set; }
+        [ProtoMember(3)]
+        public Vector3D forward { get; set; }
+        [ProtoMember(4)]
+        public Vector3D down { get; set; }
+        [ProtoMember(5)]
+        public float speedPt { get; set; }
+        [ProtoMember(6)]
+        public bool small { get; set; }
+    }
+
+    /// <summary>Server to one player: the ships in supercruise within 1000 km of them (see CruiseTrailRelay).</summary>
+    [ProtoContract]
+    public class CruiseTrailMessage
+    {
+        [ProtoMember(1)]
+        public List<CruiseTrailEntry> ships { get; set; }
+    }
+
+    [ProtoContract]
     public class FsdCapSyncMessage
     {
         [ProtoMember(1)]
@@ -166,8 +192,6 @@ namespace WarpDriveMod
         public int randomSeed { get; set; }
         [ProtoMember(5)]
         public Vector3D dropPosition { get; set; }
-        [ProtoMember(6)]
-        public float journeySeconds { get; set; }
     }
 
     [MySessionComponentDescriptor(MyUpdateOrder.Simulation)]
@@ -196,6 +220,8 @@ namespace WarpDriveMod
         public const ushort hyperdictorSyncPacket = 4394;
         public const ushort hyperdictionSequencePacket = 4395;
         public const ushort fsdCapSyncPacket = 4396;
+        public const ushort hudEventPacket = 4398;
+        public const ushort cruiseTrailPacket = 4399;
         public bool debugDraw;
         public bool debugProx = true;
         private readonly MyStringId debugRayMaterial = MyStringId.GetOrCompute("Square");
@@ -341,6 +367,12 @@ namespace WarpDriveMod
                 MyAPIGateway.Multiplayer.RegisterSecureMessageHandler(hyperdictionSequencePacket, ReceiveHyperdictionSequence);
                 MyAPIGateway.Multiplayer.RegisterSecureMessageHandler(fsdCapSyncPacket, ReceiveFsdCapSync);
 
+                if (!MyAPIGateway.Utilities.IsDedicated)
+                {
+                    MyAPIGateway.Multiplayer.RegisterSecureMessageHandler(hudEventPacket, ReceiveHudEvent);
+                    MyAPIGateway.Multiplayer.RegisterSecureMessageHandler(cruiseTrailPacket, ReceiveCruiseTrail);
+                }
+
                 MyVisualScriptLogicProvider.PlayerLeftCockpit += PlayerLeftCockpit;
 
                 if (MyAPIGateway.Multiplayer.IsServer)
@@ -354,10 +386,24 @@ namespace WarpDriveMod
 
                 HyperspaceSunManager.Instance.Init(ModContext?.ModPath);
                 hyperdictionSession = new HyperdictionSession();
+
+                FsdHud.Init();
             }
             catch (Exception)
             {
             }
+        }
+
+        private void ReceiveCruiseTrail(ushort channel, byte[] data, ulong sender, bool fromServer)
+        {
+            if (fromServer)
+                CruiseTrailRelay.Receive(data, runtime);
+        }
+
+        private void ReceiveHudEvent(ushort channel, byte[] data, ulong sender, bool fromServer)
+        {
+            if (fromServer)
+                HudEvents.Receive(data);
         }
 
         public void InitJumpControl()
@@ -697,6 +743,24 @@ namespace WarpDriveMod
             sendToOthers = false;
 
             string setting = words.Length > 1 ? words[1].ToLowerInvariant() : "";
+            if (setting == "hud")
+            {
+                HandleHudCommand(words);
+                return;
+            }
+
+            if (setting == "perf")
+            {
+                int busy = 0;
+                foreach (var hs in hyperspaceSystems)
+                {
+                    if (hs != null && hs.State != HyperspaceSystem.HyperState.Idle)
+                        busy++;
+                }
+                MyAPIGateway.Utilities.ShowMessage("FSD", FsdPerf.Report(busy, hyperspaceSystems.Count));
+                return;
+            }
+
             if (setting != "debugdraw" && setting != "debugprox")
             {
                 MyAPIGateway.Utilities.ShowMessage("FSD", "Invalid command");
@@ -737,6 +801,81 @@ namespace WarpDriveMod
             MyAPIGateway.Utilities.ShowMessage("FSD", (setting == "debugdraw" ? "DebugDraw" : "DebugProx") + " set to " + (state ? "true" : "false"));
         }
 
+        // /fsd hud on|off | scale 0.6-1.5 | opacity 0.2-1 | ping on|off | reset
+        private static void HandleHudCommand(string[] words)
+        {
+            const string usage = "Usage: /fsd hud on|off | scale 0.6-1.5 | opacity 0.2-1 | ping on|off | fx on|off | reset";
+
+            HudSettings s = HudSettings.Current;
+            string sub = words.Length > 2 ? words[2].ToLowerInvariant() : "";
+            string arg = words.Length > 3 ? words[3].Replace(',', '.') : "";
+            string reply;
+            float number;
+            bool flag;
+
+            switch (sub)
+            {
+                case "on":
+                    s.Enabled = true;
+                    reply = "HUD on";
+                    break;
+                case "off":
+                    s.Enabled = false;
+                    reply = "HUD off (its warnings are hidden too)";
+                    break;
+                case "scale":
+                    if (!float.TryParse(arg, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out number))
+                    {
+                        MyAPIGateway.Utilities.ShowMessage("FSD", usage);
+                        return;
+                    }
+                    s.Scale = MathHelper.Clamp(number, 0.6f, 1.5f);
+                    reply = "HUD scale " + s.Scale.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture);
+                    break;
+                case "opacity":
+                    if (!float.TryParse(arg, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out number))
+                    {
+                        MyAPIGateway.Utilities.ShowMessage("FSD", usage);
+                        return;
+                    }
+                    s.Opacity = MathHelper.Clamp(number, 0.2f, 1f);
+                    reply = "HUD opacity " + s.Opacity.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture);
+                    break;
+                case "ping":
+                    if (arg == "on" || arg == "off")
+                        flag = arg == "on";
+                    else if (!bool.TryParse(arg, out flag))
+                    {
+                        MyAPIGateway.Utilities.ShowMessage("FSD", usage);
+                        return;
+                    }
+                    s.Ping = flag;
+                    reply = "HUD sounds (pings and cues) " + (flag ? "on" : "off");
+                    break;
+                case "fx":
+                    if (arg == "on" || arg == "off")
+                        flag = arg == "on";
+                    else if (!bool.TryParse(arg, out flag))
+                    {
+                        MyAPIGateway.Utilities.ShowMessage("FSD", usage);
+                        return;
+                    }
+                    s.Effects = flag;
+                    reply = "Screen effects " + (flag ? "on" : "off");
+                    break;
+                case "reset":
+                    s.Reset();
+                    reply = "HUD settings reset";
+                    break;
+                default:
+                    MyAPIGateway.Utilities.ShowMessage("FSD", usage);
+                    return;
+            }
+
+            HudSettings.Save();
+            MyAPIGateway.Utilities.ShowMessage("FSD", reply);
+        }
+
         private void ReceiveDebugProx(ushort channel, byte[] data, ulong sender, bool fromServer)
         {
             if (MyAPIGateway.Multiplayer.IsServer && data.Length == 1 && MyAPIGateway.Session.GetUserPromoteLevel(sender) >= MyPromoteLevel.Admin)
@@ -773,6 +912,7 @@ namespace WarpDriveMod
                     heatSink.ExposureCheck();
             }
 
+            long perf = FsdPerf.Begin();
             for (int i = warpSystems.Count - 1; i >= 0; i--)
             {
                 WarpSystem s = warpSystems[i];
@@ -796,7 +936,10 @@ namespace WarpDriveMod
                 }
 
                 newSystems.Clear();
+            CruiseTrailRelay.ServerUpdate(warpSystems, runtime);
+            FsdPerf.End(FsdPerf.Section.Supercruise, perf);
 
+            perf = FsdPerf.Begin();
             if (hyperspaceSystems.Count > 0)
             {
                 tempHyperspaceList.Clear();
@@ -809,7 +952,9 @@ namespace WarpDriveMod
                 }
                 tempHyperspaceList.Clear();
             }
+            FsdPerf.End(FsdPerf.Section.Hyperspace, perf);
 
+            perf = FsdPerf.Begin();
             if (capitalFSDSystems.Count > 0)
             {
                 tempCapitalFSDList.Clear();
@@ -822,13 +967,16 @@ namespace WarpDriveMod
                 }
                 tempCapitalFSDList.Clear();
             }
+            FsdPerf.End(FsdPerf.Section.Capital, perf);
 
             if (!MyAPIGateway.Utilities.IsDedicated)
             {
                 HyperspaceSunManager.Instance.UpdateSimulation();
             }
 
+            perf = FsdPerf.Begin();
             hyperdictionSession?.UpdateSimulation();
+            FsdPerf.End(FsdPerf.Section.Hyperdiction, perf);
         }
 
         public override void Draw()
@@ -838,6 +986,11 @@ namespace WarpDriveMod
 
             foreach (WarpSystem s in warpSystems)
                 s.Draw();
+            CruiseTrailRelay.Draw(runtime);
+
+            long hudPerf = FsdPerf.Begin();
+            FsdHud.Update();
+            FsdPerf.End(FsdPerf.Section.Hud, hudPerf);
 
             if (debugDraw)
             {
@@ -980,6 +1133,10 @@ namespace WarpDriveMod
                 MyAPIGateway.Multiplayer.UnregisterSecureMessageHandler(hyperdictorSyncPacket, ReceiveHyperdictorSync);
                 MyAPIGateway.Multiplayer.UnregisterSecureMessageHandler(hyperdictionSequencePacket, ReceiveHyperdictionSequence);
                 MyAPIGateway.Multiplayer.UnregisterSecureMessageHandler(fsdCapSyncPacket, ReceiveFsdCapSync);
+                MyAPIGateway.Multiplayer.UnregisterSecureMessageHandler(hudEventPacket, ReceiveHudEvent);
+                MyAPIGateway.Multiplayer.UnregisterSecureMessageHandler(cruiseTrailPacket, ReceiveCruiseTrail);
+                CruiseTrailRelay.Clear();
+                FsdHud.Close();
 
                 hyperspaceSystems.Clear();
                 capitalFSDSystems.Clear();

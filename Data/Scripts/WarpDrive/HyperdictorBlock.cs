@@ -36,7 +36,7 @@ namespace WarpDriveMod
         public const float STANDBY_POWER_MW = 0.001f;
         public const int COOLDOWN_TOTAL_TICKS = 10 * 60 * 60; // 10 minutes (36000 ticks)
         public const int CHARGE_TOTAL_TICKS = 45 * 60; // 45 seconds from empty at full power
-        public const double MAX_FIELD_RADIUS_METERS = 50000.0; // 50 km sphere
+        public const double MAX_FIELD_RADIUS_METERS = 500000.0; // 500 km sphere
 
         public IMyFunctionalBlock Block { get; private set; }
         public MyCubeGrid MainGrid => Block?.CubeGrid as MyCubeGrid;
@@ -58,36 +58,34 @@ namespace WarpDriveMod
         public bool IsBusy { get; set; } = false;
 
         /// <summary>True when the field is fully up and free to catch a new ship.</summary>
-        /// <summary>The ship's own FSD. The Hyperdictor only works while it can actually make the chase jump.</summary>
-        public HyperspaceSystem Interceptor
-        {
-            get
-            {
-                var grid = MainGrid;
-                return grid != null ? WarpDriveSession.instance?.GetGridHyperspace(grid.EntityId) : null;
-            }
-        }
-
-        public bool HasUsableFsd(out string reason)
-        {
-            var fsd = Interceptor;
-            if (fsd == null)
-            {
-                reason = "NO FSD ON BOARD";
-                return false;
-            }
-            return fsd.IsInterceptReady(out reason);
-        }
-
-        /// <summary>True when the field is fully up, the ship's FSD is ready, and no chase is running.</summary>
         public bool CanCatch
         {
             get
             {
-                if (!IsEngaged || _engagedGraceTicks != 0 || IsBusy || Block == null || Block.MarkedForClose || !Block.IsFunctional)
-                    return false;
-                string reason;
-                return HasUsableFsd(out reason);
+                // The ship's own FSD is not needed: a caught ship is dropped next to the Hyperdictor, nobody chases it
+                return IsEngaged && _engagedGraceTicks == 0 && !IsBusy && Block != null && !Block.MarkedForClose && Block.IsFunctional;
+            }
+        }
+
+        /// <summary>Why <see cref="CanCatch"/> is false right now (empty when it is true). For the log.</summary>
+        public string CatchBlocker
+        {
+            get
+            {
+                if (!IsEngaged)
+                    return "FIELD NOT ENGAGED";
+                if (_engagedGraceTicks != 0)
+                    return "FIELD STILL SETTLING AFTER ENGAGING";
+                if (IsBusy)
+                    return "BUSY WITH A CHASE";
+                if (FtlBlocker().Length > 0)
+                    return "OWN SHIP " + FtlBlocker();
+                if (Block == null || Block.MarkedForClose)
+                    return "BLOCK GONE";
+                if (!Block.IsFunctional)
+                    return "BLOCK DAMAGED";
+
+                return "";
             }
         }
 
@@ -100,7 +98,6 @@ namespace WarpDriveMod
         private int _syncTick = 0;
         private bool _registeredWithSession = false;
         private int _engagedGraceTicks = 0;
-        private bool _warnedNoFsd = false;
 
         public override void Init(MyObjectBuilder_EntityBase objectBuilder)
         {
@@ -169,7 +166,7 @@ namespace WarpDriveMod
             _sink?.Update();
 
             // Server-authoritative logic
-            if (MyAPIGateway.Multiplayer.IsServer || !MyAPIGateway.Multiplayer.MultiplayerActive)
+            if (NetAuthority.IsAuthority)
             {
                 UpdateServerState();
             }
@@ -264,6 +261,15 @@ namespace WarpDriveMod
 
         private void UpdateEngagedTick()
         {
+            // The field only holds in normal space (in hyperspace the ship is moved by teleports, so it still reads as stationary)
+            string ftl = FtlBlocker();
+            if (ftl.Length > 0)
+            {
+                Disengage(false);
+                NotifyShip("HYPERDICTOR DISENGAGED - FIELD COLLAPSED " + ftl, "Red");
+                return;
+            }
+
             // Balancing constraint: SHIP MUST REMAIN COMPLETELY STATIONARY!
             // (the ship is allowed to turn and jump once it is committed to a chase)
             if (!IsBusy && !IsGridStationary())
@@ -287,18 +293,6 @@ namespace WarpDriveMod
                 return;
             }
 
-            // The field can be up while the ship's FSD can't make the chase (no drive, empty capacitor, damaged...). Say so once instead of silently catching nothing
-            if (!IsBusy)
-            {
-                string fsdReason;
-                if (HasUsableFsd(out fsdReason))
-                    _warnedNoFsd = false;
-                else if (!_warnedNoFsd)
-                {
-                    _warnedNoFsd = true;
-                    NotifyShip($"HYPERDICTOR FIELD UP BUT FSD UNAVAILABLE ({fsdReason}) - CANNOT INTERCEPT", "Red");
-                }
-            }
         }
 
         private void UpdateCooldownTick()
@@ -317,6 +311,35 @@ namespace WarpDriveMod
             {
                 State = HyperdictorState.Off;
             }
+        }
+
+        /// <summary>Where the ship's own drive has taken it, if out of normal space ("" when it is in normal space).</summary>
+        public string FtlBlocker()
+        {
+            var grid = MainGrid;
+            var session = WarpDriveSession.instance;
+            if (grid == null || session == null)
+                return "";
+
+            WarpSystem ws = session.GetGridWarpSystem(grid);
+            if (ws != null && ws.warpState == WarpSystem.State.active)
+                return "IN SUPERCRUISE";
+
+            foreach (var hs in session.GetHyperspaceSystems())
+            {
+                if (hs != null && (hs.State == HyperspaceSystem.HyperState.Countdown || hs.State == HyperspaceSystem.HyperState.Active)
+                    && hs.GridSystem != null && hs.GridSystem.Contains(grid))
+                    return "IN HYPERSPACE";
+            }
+
+            foreach (var cap in session.GetCapitalFSDSystems())
+            {
+                if (cap != null && cap.State >= CapitalFSD.CapState.engageRiser && cap.State <= CapitalFSD.CapState.jumpOut
+                    && cap.GridSystem != null && cap.GridSystem.Contains(grid))
+                    return "IN HYPERSPACE";
+            }
+
+            return "";
         }
 
         public bool IsGridStationary()
@@ -345,8 +368,22 @@ namespace WarpDriveMod
 
             if (State == HyperdictorState.Engaged)
             {
+                // Letting go now would cancel the chase and free every ship it has caught
+                if (HyperdictionSession.Instance != null && HyperdictionSession.Instance.IsCatching(this))
+                {
+                    NotifyPlayer(playerId, "Cannot disengage: a catch is in progress", "Red");
+                    return;
+                }
+
                 Disengage(false);
                 NotifyPlayer(playerId, "Hyperdictor Disengaged", "White");
+                return;
+            }
+
+            string ftl = FtlBlocker();
+            if (ftl.Length > 0)
+            {
+                NotifyPlayer(playerId, "Cannot engage Hyperdictor " + ftl.ToLowerInvariant() + ": the field only holds in normal space", "Red");
                 return;
             }
 
@@ -366,7 +403,7 @@ namespace WarpDriveMod
             State = HyperdictorState.Engaged;
             _engagedGraceTicks = 20; // Allow 20 ticks (~0.33s) for SE distributor to allocate 20 MW
             _sink?.Update();
-            _warnedNoFsd = false;
+            PlayEngagedSound();
             NotifyShip($"HYPERDICTOR ENGAGED - {FieldRadiusMeters / 1000.0:0.#}KM INTERDICTION FIELD ACTIVE", "Green");
             SyncStateToClients();
         }
@@ -503,8 +540,7 @@ namespace WarpDriveMod
             sb.AppendLine();
             sb.AppendLine("=== Frame Shift Hyperdictor ===");
             sb.AppendLine($"Target: Hyperspace / Witchspace Transits Only");
-            string fsdReason;
-            sb.AppendLine(HasUsableFsd(out fsdReason) ? "FSD: READY" : $"FSD: UNAVAILABLE ({fsdReason}) - HYPERDICTOR INOPERATIVE");
+            sb.AppendLine("Caught ships are dropped next to this ship");
             sb.AppendLine($"Power Required: {POWER_REQUIRED_MW:0.0} MW");
             sb.AppendLine($"Field Radius: {FieldRadiusMeters / 1000.0:0} km");
             sb.AppendLine($"Stationary Status: {(IsGridStationary() ? "Stationary (OK)" : "Moving (RESTRICTED)")}");
@@ -554,25 +590,13 @@ namespace WarpDriveMod
         private void NotifyShip(string message, string font = "White")
         {
             if (MainGrid == null) return;
-            var players = new List<IMyPlayer>();
-            MyAPIGateway.Players.GetPlayers(players);
-            foreach (var p in players)
-            {
-                if (p?.Character != null)
-                {
-                    var seated = p.Character.Parent as VRage.Game.ModAPI.IMyCubeBlock;
-                    if (seated != null && seated.CubeGrid == MainGrid)
-                    {
-                        MyVisualScriptLogicProvider.ShowNotification(message, 4000, font, p.IdentityId);
-                    }
-                }
-            }
+            HudEvents.Post(MainGrid.EntityId, 0L, message, HudEvents.Classify(message, font), HudRoute.Server, 4f);
         }
 
         private void NotifyPlayer(long playerId, string message, string font = "White")
         {
             if (playerId <= 0) return;
-            MyVisualScriptLogicProvider.ShowNotification(message, 3000, font, playerId);
+            HudEvents.Post(MainGrid != null ? MainGrid.EntityId : 0L, playerId, message, HudEvents.Classify(message, font), HudRoute.Server, 3f);
         }
 
         private void SyncStateToClients()
@@ -606,6 +630,8 @@ namespace WarpDriveMod
             {
                 if (State == HyperdictorState.Charged)
                     PlaySpoolDownSound();
+                else if (State == HyperdictorState.Engaged)
+                    PlayEngagedSound();
             }
         }
 
@@ -644,12 +670,16 @@ namespace WarpDriveMod
             catch (Exception ex)
             {
                 MyLog.Default.WriteLineAndConsole($"[HyperdictorBlock] Error loading storage: {ex.Message}");
+
+                // Nothing readable is left to protect: without this the guard in SaveStorageData would block every later save
+                _lastSavedCooldown = CooldownTicksRemaining;
+                _lastSavedRatio = StoredChargeRatio;
             }
         }
 
         private void SaveStorageData()
         {
-            if (!(MyAPIGateway.Multiplayer.IsServer || !MyAPIGateway.Multiplayer.MultiplayerActive))
+            if (!NetAuthority.IsAuthority)
                 return;
             if (_lastSavedCooldown < 0)
                 return; // not loaded yet, saving now would overwrite the stored values

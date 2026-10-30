@@ -54,6 +54,15 @@ namespace WarpDriveMod
             jumpAction.Writer = ActionJumpWriter;
             MyAPIGateway.TerminalControls.AddAction<IMyUpgradeModule>(jumpAction);
 
+            // Hotbar Action: opens the HUD target menu (scroll to choose), pressing it again locks the highlighted target
+            var targetAction = MyAPIGateway.TerminalControls.CreateAction<IMyUpgradeModule>("HyperspaceSelectTarget");
+            targetAction.Name = new StringBuilder("Jump Target (Open / Lock)");
+            targetAction.Icon = "Textures\\GUI\\Icons\\Actions\\Toggle.dds";
+            targetAction.Enabled = IsWarpDrive;   // supercruise-only drives use it for the cruise assist lock
+            targetAction.Action = OnTargetMenuPressed;
+            targetAction.Writer = ActionTargetWriter;
+            MyAPIGateway.TerminalControls.AddAction<IMyUpgradeModule>(targetAction);
+
             // Fleet Jump Button
             var fleetJumpBtn = MyAPIGateway.TerminalControls.CreateControl<IMyTerminalControlButton, IMyUpgradeModule>("HyperspaceFleetJumpBtn");
             fleetJumpBtn.Title = MyStringId.GetOrCompute("Fleet Jump (Create / Quit)");
@@ -247,6 +256,15 @@ namespace WarpDriveMod
             jumpAction.Action = OnJumpButtonPressed;
             jumpAction.Writer = ActionJumpWriter;
             MyAPIGateway.TerminalControls.AddAction<IMyRemoteControl>(jumpAction);
+
+            // Hotbar Action: opens the HUD target menu (scroll to choose), pressing it again locks the highlighted target
+            var targetAction = MyAPIGateway.TerminalControls.CreateAction<IMyRemoteControl>("HyperspaceSelectTarget_RC");
+            targetAction.Name = new StringBuilder("Jump Target (Open / Lock)");
+            targetAction.Icon = "Textures\\GUI\\Icons\\Actions\\Toggle.dds";
+            targetAction.Enabled = IsWarpGrid;   // supercruise-only drives use it for the cruise assist lock
+            targetAction.Action = OnTargetMenuPressed;
+            targetAction.Writer = ActionTargetWriter;
+            MyAPIGateway.TerminalControls.AddAction<IMyRemoteControl>(targetAction);
 
             // Fleet Jump Button for Remote Control
             var fleetJumpBtn = MyAPIGateway.TerminalControls.CreateControl<IMyTerminalControlButton, IMyRemoteControl>("HyperspaceFleetJumpBtn_RC");
@@ -609,6 +627,11 @@ namespace WarpDriveMod
             return block?.GameLogic?.GetAs<WarpDrive>() != null;
         }
 
+        private static bool IsWarpGrid(IMyTerminalBlock block)
+        {
+            return GetWarpDrive(block) != null;
+        }
+
         private static bool IsHyperspaceDrive(IMyTerminalBlock block)
         {
             var drive = block?.GameLogic?.GetAs<WarpDrive>();
@@ -791,7 +814,7 @@ namespace WarpDriveMod
             {
                 var p = MyAPIGateway.Session?.Player;
                 long pid = p?.IdentityId ?? 0L;
-                MyAPIGateway.Utilities.ShowNotification("No Frame Shift Drive found on grid!", 2000, "Red");
+                HudEvents.PostLocal("No Frame Shift Drive found on grid!", 2000, "Red");
                 return;
             }
 
@@ -799,7 +822,7 @@ namespace WarpDriveMod
             {
                 var p = MyAPIGateway.Session?.Player;
                 long pid = p?.IdentityId ?? 0L;
-                MyAPIGateway.Utilities.ShowNotification("This FSD does not support Hyperspace jumps! (Supercruise Only)", 3000, "Red");
+                HudEvents.PostLocal("This FSD does not support Hyperspace jumps! (Supercruise Only)", 3000, "Red");
                 return;
             }
 
@@ -809,7 +832,7 @@ namespace WarpDriveMod
 
             if (drive.warpSystem != null && drive.warpSystem.warpState != WarpSystem.State.idle && (!hs.IsValid || hs.IsIdle))
             {
-                drive.warpSystem.SendMessage("Another seat is piloting this grid", 3f, "Red", playerId);
+                HudEvents.PostLocal("Another seat is piloting this grid", 3000, "Red");
                 return;
             }
 
@@ -846,7 +869,7 @@ namespace WarpDriveMod
             var drive = GetWarpDrive(block);
             if (drive != null && !drive.supportsHyperspace)
             {
-                MyAPIGateway.Utilities.ShowNotification("This FSD does not support Hyperspace jumps! (Supercruise Only)", 3000, "Red");
+                HudEvents.PostLocal("This FSD does not support Hyperspace jumps! (Supercruise Only)", 3000, "Red");
                 return;
             }
 
@@ -855,12 +878,44 @@ namespace WarpDriveMod
             FleetJumpSystem.InitiateFleetJump(block, playerId);
         }
 
+        // Toolbar: first press opens the target menu, the next press locks the highlighted target
+        private static void OnTargetMenuPressed(IMyTerminalBlock block)
+        {
+            FsdHud.ToggleTargetMenu(GetWarpDrive(block));
+        }
+
+        private static void ActionTargetWriter(IMyTerminalBlock block, StringBuilder sb)
+        {
+            if (FsdHud.IsTargetMenuOpen)
+            {
+                sb.Append("LOCK");
+                return;
+            }
+
+            var hs = GetHyperspace(block);
+            if (!hs.IsValid)
+            {
+                // Supercruise-only drive: the cruise assist lock
+                var drive = GetWarpDrive(block);
+                Vector3D lockCoords;
+                string lockName;
+                if (drive != null && CruiseLock.TryGet(drive.warpSystem, out lockCoords, out lockName) && !string.IsNullOrEmpty(lockName))
+                    sb.Append(lockName.Length > 7 ? lockName.Substring(0, 7) : lockName);
+                else
+                    sb.Append("GPS");
+                return;
+            }
+
+            string name = hs.Mode == HyperspaceSystem.JumpMode.GpsWaypoint && hs.SelectedGpsCoords.HasValue ? hs.SelectedGpsName : "BLIND";
+            sb.Append(string.IsNullOrEmpty(name) ? "GPS" : (name.Length > 7 ? name.Substring(0, 7) : name));
+        }
+
         private static void OnFleetJoinButtonPressed(IMyTerminalBlock block)
         {
             var drive = GetWarpDrive(block);
             if (drive != null && !drive.supportsHyperspace)
             {
-                MyAPIGateway.Utilities.ShowNotification("This FSD does not support Hyperspace jumps! (Supercruise Only)", 3000, "Red");
+                HudEvents.PostLocal("This FSD does not support Hyperspace jumps! (Supercruise Only)", 3000, "Red");
                 return;
             }
 

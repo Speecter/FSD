@@ -24,7 +24,7 @@ namespace WarpDriveMod
         public const double SPEED_CAP_MPS = 50000.0;     // 50 km/s
         public const double MIN_SPEED_MPS = 10000.0;     // never crawl, even if caught during the departure ramp
         public const double SPREAD_DEG = 5.0;
-        public const double FOLLOW_STANDOFF_METERS = 800.0; // the hyperdictor lands this far behind the victim
+        public const double DROP_STANDOFF_METERS = 1000.0;  // a caught ship is dropped this far from the Hyperdictor ship (plus both ships' radii)
         public const float REFERENCE_MASS_KG = 1807008f;    // tuned ship: full-strength effects at or below this mass, weaker above
         public const float MIN_SCALE = 0.25f;
 
@@ -389,36 +389,27 @@ namespace WarpDriveMod
         }
 
         /// <summary>
-        /// Picks where the victim leaves the conduit: DROP_SECONDS of travel from the catch point at min(current speed, 50 km/s),
-        /// in a random direction within a SPREAD_DEG cone around the original heading. Deterministic for a given seed.
-        /// Retries other directions when the line hits a planet, a gravity well or an occupied area.
+        /// Where a caught ship is dropped: DROP_STANDOFF_METERS from the Hyperdictor ship, first on the side the victim came from,
+        /// then in other directions when that spot is in a planet's gravity or occupied. Deterministic for a given seed.
         /// </summary>
-        public static Vector3D ComputeSpreadDrop(Vector3D catchPos, Vector3D catchDir, double speedMps, int seed, double victimRadius, ICollection<IMyCubeGrid> ignoreGrids)
+        public static Vector3D ComputeDropNear(Vector3D anchor, Vector3D towardVictim, int seed, double victimRadius, double anchorRadius, ICollection<IMyCubeGrid> ignoreGrids)
         {
-            speedMps = MathHelper.Clamp(speedMps, MIN_SPEED_MPS, SPEED_CAP_MPS);
-            double dist = speedMps * (TOTAL_TICKS / 60.0);
-
-            Vector3D dir = catchDir.LengthSquared() > 0.001 ? Vector3D.Normalize(catchDir) : Vector3D.Forward;
+            Vector3D dir = towardVictim.LengthSquared() > 1.0 ? Vector3D.Normalize(towardVictim) : Vector3D.Forward;
             Vector3D perp1 = Vector3D.CalculatePerpendicularVector(dir);
             Vector3D perp2 = Vector3D.Cross(dir, perp1);
+            double dist = DROP_STANDOFF_METERS + victimRadius + anchorRadius;
 
             var rng = new Random(seed ^ 0x5bd1e995);
             float allowGravity = (Settings.instance != null ? Settings.instance.AllowInGravityMax : 0.2f);
-            Vector3D best = catchPos + dir * dist;
+            Vector3D best = anchor + dir * dist;
 
             for (int attempt = 0; attempt < 10; attempt++)
             {
-                double theta = MathHelper.ToRadians(SPREAD_DEG) * Math.Sqrt(rng.NextDouble());
+                // The first try is straight toward the victim's side, later ones spread out to a hemisphere
+                double theta = attempt == 0 ? 0.0 : MathHelper.ToRadians(90.0) * Math.Sqrt(rng.NextDouble());
                 double phi = rng.NextDouble() * Math.PI * 2.0;
                 Vector3D lateral = perp1 * Math.Cos(phi) + perp2 * Math.Sin(phi);
-                Vector3D spread = Vector3D.Normalize(dir * Math.Cos(theta) + lateral * Math.Sin(theta));
-                Vector3D candidate = catchPos + spread * dist;
-                if (attempt == 0)
-                    best = candidate;
-
-                string blockedBy;
-                if (HyperspaceSystem.IsTrajectoryBlockedByPlanet(catchPos, candidate, out blockedBy))
-                    continue;
+                Vector3D candidate = anchor + Vector3D.Normalize(dir * Math.Cos(theta) + lateral * Math.Sin(theta)) * dist;
 
                 float g;
                 Vector3D gravity = MyAPIGateway.Physics.CalculateNaturalGravityAt(candidate, out g);
@@ -432,16 +423,6 @@ namespace WarpDriveMod
             }
 
             return ClampPlanetClearance(best, victimRadius);
-        }
-
-        /// <summary>Where the hyperdictor ship arrives: behind the victim's drop point, back along the victim's line of travel.</summary>
-        public static Vector3D ComputeFollowPosition(Vector3D catchPos, Vector3D dropPos, double standoff)
-        {
-            Vector3D back = catchPos - dropPos;
-            if (back.LengthSquared() < 1.0)
-                back = Vector3D.Backward;
-            back.Normalize();
-            return dropPos + back * standoff;
         }
 
         private static Vector3D ClampPlanetClearance(Vector3D result, double victimRadius)

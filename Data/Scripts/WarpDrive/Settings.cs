@@ -91,7 +91,7 @@ namespace WarpDriveMod
                 startSpeed = 1000 / 60d, //Initial cruise speed in km/s. Allows up to maxSpeed. Default is 1km/s.
                 maxHeat = 1f, //Multiplier for FSD heat capacities. Does not affect Heat Sinks. Default is 1.
                 heatGain = 1f, //Multiplier for global heat generation. Set to 0 to disable heat entirely. Default is 1.
-                heatDissipationDrive = 3 / 60f, //Heat/sec FSD dissipation rate. Does not affect Heat Sink dissipation. SG is 1/4 of this. This value is 10x ingame. Default is 3.
+                heatDissipationDrive = 1 / 60f, //Heat/sec FSD dissipation rate. Does not affect Heat Sink dissipation. SG is 1/4 of this. This value is 10x ingame. Default is 1.
                 baseRequiredPower = 20f, //The absolute minimum power a LG drive can use to spool. Measured in MW. Default is 20.
                 baseRequiredPowerSmall = 20f, //The absolute minimum power a SG drive can use to spool. Measured in MW. Default is 20.
                 powerRequirementMultiplier = 2, //Power multiplier for higher speeds while actively cruising. Default is 2.
@@ -376,7 +376,7 @@ namespace WarpDriveMod
             { "startSpeed", "Initial cruise speed in km/s. Allows up to maxSpeed. Default: 1km/s." },
             { "maxHeat", "Multiplier for FSD heat capacities. Does not affect Heat Sinks. Max: 200. Default: 1." },
             { "heatGain", "Multiplier for global heat generation. Set to 0 to disable heat entirely. Default: 1." },
-            { "heatDissipationDrive", "Heat/sec FSD dissipation rate. Does not affect Heat Sink dissipation. SG is 1/4 of this. This value is 10x ingame. Default: 3." },
+            { "heatDissipationDrive", "Heat/sec FSD dissipation rate. Does not affect Heat Sink dissipation. SG is 1/4 of this. This value is 10x ingame. Default: 1." },
             { "baseRequiredPower", "The absolute minimum power a LG drive can use to spool. Measured in MW. Default: 20." },
             { "baseRequiredPowerSmall", "The absolute minimum power a SG drive can use to spool. Measured in MW. Default: 20." },
             { "powerRequirementMultiplier", "Power multiplier for higher speeds while actively cruising. Default: 2." },
