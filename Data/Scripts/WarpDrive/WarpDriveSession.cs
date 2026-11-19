@@ -419,6 +419,14 @@ namespace WarpDriveMod
             runtime++;
             WarpDrive.debugDraw.Clear();
 
+            if (debugDraw)
+            {
+                IMyShipController localSeat = MyAPIGateway.Session.Player?.Character?.Parent as IMyShipController;
+                WarpSystem localSystem = GetGridWarpSystem(localSeat?.CubeGrid as MyCubeGrid);
+                if (localSystem != null && localSystem.valid && localSystem.warpState != WarpSystem.State.active)
+                    WarpDrive.ProximityDanger(localSystem.grid.FindWorldMatrix(localSystem.controlSeat ?? localSeat), localSystem.grid, 0, true);
+            }
+
                 int budget = Math.Max(1, (exposureQueue.Count + 119) / 120); //rate limiting for grids with tons of sinks
                 while (budget-- > 0 && exposureQueue.Count > 0)
                 {
