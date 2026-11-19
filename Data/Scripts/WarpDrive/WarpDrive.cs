@@ -179,7 +179,7 @@ namespace WarpDriveMod
         public static IMyEntity ProximityDanger(MatrixD gridMatrix, GridSystem gridSystem, double gridSpeed, bool spooling = false)
         {
             IMyCubeGrid mainGrid = gridSystem?.mainGrid;
-            if (mainGrid == null || (spooling && mainGrid.Physics == null) || !WarpDriveSession.instance.debugProx)
+            if (mainGrid == null || (spooling && mainGrid.Physics == null))
                 return null;
 
             MatrixD toSeat = MatrixD.Invert(gridMatrix);
@@ -197,7 +197,8 @@ namespace WarpDriveMod
             LineD path = new LineD(center - forward * shipBox.HalfExtents.Z, center + forward * (shipBox.HalfExtents.Z + Math.Max(500.0, gridSpeed)));
             var pathBox = new MyOrientedBoundingBoxD((path.From + path.To) / 2, new Vector3D(pathWidth, pathHeight, path.Length / 2), Quaternion.CreateFromRotationMatrix(gridMatrix));
 
-            if (WarpDriveSession.instance.debugDraw)
+            IMyShipController localSeat = MyAPIGateway.Session.Player?.Character?.Parent as IMyShipController;
+            if (WarpDriveSession.instance.debugDraw && localSeat?.CubeGrid != null && gridSystem.Contains((MyCubeGrid)localSeat.CubeGrid))
             {
                 var boxCorners = new Vector3D[8];
                 for (int i = 0; i < 8; i++)
@@ -212,6 +213,9 @@ namespace WarpDriveMod
                     }
                 }
             }
+
+            if (!WarpDriveSession.instance.debugProx)
+                return null;
 
             var sphere = new BoundingSphereD(pathBox.Center, pathBox.HalfExtent.Length());
             List<IMyEntity> entList = MyAPIGateway.Entities.GetTopMostEntitiesInSphere(ref sphere);
@@ -235,7 +239,7 @@ namespace WarpDriveMod
                 }
                 else if (zone == null || Settings.instance.AllowInSafeZone || !zone.Enabled)
                 {
-                if (!(ent is MyCubeGrid || ent is MyVoxelMap))
+                if (!(ent is MyCubeGrid && ent.Physics != null || ent is MyVoxelMap))
                         continue;
 
                 //asteroids ignored over 20km/s
