@@ -39,7 +39,7 @@ namespace WarpDriveMod
         private readonly List<IMyPlayer> playersInWarpList = new List<IMyPlayer>();
         private readonly Dictionary<long, float> playerOxygenSnapshot = new Dictionary<long, float>();
         private long pilotId;
-        private IMyShipController controlSeat;
+        public IMyShipController controlSeat;
         private readonly Dictionary<IMyGyro, float> gyroBlocks = new Dictionary<IMyGyro, float>();
         private MyParticleEffect effect;
         private readonly MyEntity3DSoundEmitter sound;
